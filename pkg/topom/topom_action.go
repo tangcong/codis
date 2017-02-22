@@ -11,13 +11,17 @@ import (
 
 func (s *Topom) ProcessSlotAction() error {
 	for s.IsOnline() {
+		start := time.Now()
 		sid, ok, err := s.SlotActionPrepare()
 		if err != nil || !ok {
 			return err
 		}
+		middle := time.Since(start)
 		if err := s.processSlotAction(sid); err != nil {
 			return err
 		}
+		end := time.Since(start)
+		log.Warnf("slot-[%d] action prepare cost [%d],process action cost [%d],total cost [%d]", sid, middle, end-middle, end)
 		time.Sleep(time.Millisecond * 10)
 	}
 	return nil
