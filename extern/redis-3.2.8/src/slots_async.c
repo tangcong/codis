@@ -40,14 +40,17 @@ lazyReleaseIteratorScanCallback(void *data, const dictEntry *de) {
 }
 
 static void
-lazyReleaseIteratorNext(lazyReleaseIterator *it) {
+lazyReleaseIteratorNext(lazyReleaseIterator *it, int step) {
     robj *val = it->val;
     serverAssert(val != NULL);
 
-    const int step = 100;
+    unsigned int limit = step * 2;
+    if (limit < 100) {
+        limit = 100;
+    }
 
     if (val->type == OBJ_LIST) {
-        if (listTypeLength(val) <= step * 2) {
+        if (listTypeLength(val) <= limit) {
             decrRefCount(val);
             it->val = NULL;
         } else {
@@ -61,13 +64,13 @@ lazyReleaseIteratorNext(lazyReleaseIterator *it) {
 
     if (val->type == OBJ_HASH || val->type == OBJ_SET) {
         dict *ht = val->ptr;
-        if (dictSize(ht) <= step * 2) {
+        if (dictSize(ht) <= limit) {
             decrRefCount(val);
             it->val = NULL;
         } else {
             list *ll = listCreate();
             listSetFreeMethod(ll, decrRefCountVoid);
-            int loop = step * 10;
+            int loop = step;
             void *pd[] = {ll};
             do {
                 it->cursor = dictScan(ht, it->cursor, lazyReleaseIteratorScanCallback, pd);
@@ -87,7 +90,7 @@ lazyReleaseIteratorNext(lazyReleaseIterator *it) {
     if (val->type == OBJ_ZSET) {
         zset *zs = val->ptr;
         dict *ht = zs->dict;
-        if (dictSize(ht) <= step * 2) {
+        if (dictSize(ht) <= limit) {
             decrRefCount(val);
             it->val = NULL;
         } else {
@@ -128,14 +131,14 @@ lazyReleaseIteratorRemains(lazyReleaseIterator *it) {
     return -1;
 }
 
-int
-slotsmgrtLazyReleaseIncrementally() {
+static int
+slotsmgrtLazyReleaseStep(int step) {
     list *ll = server.slotsmgrt_lazy_release;
     if (listLength(ll) != 0) {
         listNode *head = listFirst(ll);
         lazyReleaseIterator *it = listNodeValue(head);
         if (lazyReleaseIteratorHasNext(it)) {
-            lazyReleaseIteratorNext(it);
+            lazyReleaseIteratorNext(it, step);
         } else {
             freeLazyReleaseIterator(it);
             listDelNode(ll, head);
@@ -145,22 +148,69 @@ slotsmgrtLazyReleaseIncrementally() {
     return 0;
 }
 
+static void
+slotsmgrtLazyReleaseMicroseconds(long long usecs) {
+    long long deadline = ustime() + usecs;
+    while (slotsmgrtLazyReleaseStep(50)) {
+        if (ustime() >= deadline) {
+            return;
+        }
+    }
+}
+
+static struct {
+    long long last_numcommands;
+    int step;
+} lazy_release_options = {
+    .last_numcommands = 0,
+    .step = 1,
+};
+
+void
+slotsmgrtLazyReleaseCleanup() {
+    long long ops = server.stat_numcommands - lazy_release_options.last_numcommands;
+    if (ops < 0) {
+        ops = 0;
+    }
+    if (ops > 30) {
+        lazy_release_options.step = 1 + (1000 / ops) * 3;
+    } else {
+        lazy_release_options.step = 100;
+    }
+    lazy_release_options.last_numcommands = server.stat_numcommands;
+
+    long long usecs = lazy_release_options.step / 10 * 100;
+    if (usecs != 0) {
+        slotsmgrtLazyReleaseMicroseconds(usecs);
+    }
+}
+
+void
+slotsmgrtLazyReleaseIncrementally() {
+    slotsmgrtLazyReleaseStep(lazy_release_options.step);
+}
+
+/* *
+ * SLOTSMGRT-LAZY-RELEASE $microseconds
+ * */
 void
 slotsmgrtLazyReleaseCommand(client *c) {
     if (c->argc != 1 && c->argc != 2) {
         addReplyError(c, "wrong number of arguments for SLOTSMGRT-LAZY-RELEASE");
         return;
     }
-    long long step = 1;
+    long long usecs = 1;
     if (c->argc != 1) {
-        if (getLongLongFromObject(c->argv[1], &step) != C_OK ||
-                !(step >= 0 && step <= INT_MAX)) {
-            addReplyErrorFormat(c, "invalid value of step (%s)",
+        if (getLongLongFromObject(c->argv[1], &usecs) != C_OK ||
+                !(usecs >= 0 && usecs <= INT_MAX)) {
+            addReplyErrorFormat(c, "invalid value of usecs (%s)",
                     (char *)c->argv[1]->ptr);
             return;
         }
     }
-    while (step != 0 && slotsmgrtLazyReleaseIncrementally()) { step --; }
+    if (usecs != 0) {
+        slotsmgrtLazyReleaseMicroseconds(usecs);
+    }
 
     list *ll = server.slotsmgrt_lazy_release;
 
@@ -505,8 +555,8 @@ singleObjectIteratorNext(client *c, singleObjectIterator *it,
 
         if (val->type == OBJ_HASH || val->type == OBJ_SET) {
             int loop = maxbulks * 10;
-            if (loop < 128) {
-                loop = 128;
+            if (loop < 100) {
+                loop = 100;
             }
             dict *ht = val->ptr;
             void *pd[] = {ll, val, &len};
@@ -784,8 +834,9 @@ unlinkSlotsmgrtAsyncCachedClient(client *c, const char *errmsg) {
     serverLog(LL_WARNING, "slotsmgrt_async: unlink client %s:%d (DB=%d): "
             "sending_msgs = %ld, batched_iter = %ld, blocked_list = %ld, "
             "timeout = %lld(ms), elapsed = %lld(ms) (%s)",
-            ac->host, ac->port, c->db->id, ac->sending_msgs, it != NULL ? (long)listLength(it->list) : -1,
-            (long)listLength(ac->blocked_list), ac->timeout, elapsed, errmsg);
+            ac->host, ac->port, c->db->id, ac->sending_msgs,
+            it != NULL ? (long)listLength(it->list) : -1, (long)listLength(ac->blocked_list),
+            ac->timeout, elapsed, errmsg);
 
     sdsfree(ac->host);
     if (it != NULL) {
@@ -912,8 +963,6 @@ slotsmgrtAsyncCleanup() {
         releaseSlotsmgrtAsyncClient(i, ac->batched_iter != NULL ?
                 "interrupted: migration timeout" : "interrupted: idle timeout");
     }
-    long long deadline = mstime() + 1;
-    while (slotsmgrtLazyReleaseIncrementally() && mstime() < deadline) {}
 }
 
 static int
@@ -1019,14 +1068,16 @@ slotsmgrtAsyncMaxBufferLimit(unsigned int maxbytes) {
 }
 
 static long
-slotsmgrtAsyncNextMessagesMicroseconds(slotsmgrtAsyncClient *ac, long long usecs, long atleast) {
+slotsmgrtAsyncNextMessagesMicroseconds(slotsmgrtAsyncClient *ac, long atleast, long long usecs) {
     batchedObjectIterator *it = ac->batched_iter;
     long long deadline = ustime() + usecs;
     long msgs = 0;
     while (batchedObjectIteratorHasNext(it) && getClientOutputBufferMemoryUsage(ac->c) < it->maxbytes) {
-        msgs += batchedObjectIteratorNext(ac->c, it);
-        if (msgs >= atleast && deadline <= ustime()) {
-            break;
+        if ((msgs += batchedObjectIteratorNext(ac->c, it)) < atleast) {
+            continue;
+        }
+        if (ustime() >= deadline) {
+            return msgs;
         }
     }
     return msgs;
@@ -1064,10 +1115,10 @@ slotsmgrtAsyncGenericCommand(client *c, int usetag, int usekey) {
         return;
     }
     if (maxbulks == 0) {
-        maxbulks = 1000;
+        maxbulks = 200;
     }
-    if (maxbulks > 1024 * 512) {
-        maxbulks = 1024 * 512;
+    if (maxbulks > 512 * 1024) {
+        maxbulks = 512 * 1024;
     }
     long long maxbytes;
     if (getLongLongFromObject(c->argv[5], &maxbytes) != C_OK ||
@@ -1077,7 +1128,7 @@ slotsmgrtAsyncGenericCommand(client *c, int usetag, int usekey) {
         return;
     }
     if (maxbytes == 0) {
-        maxbytes = 1024 * 256;
+        maxbytes = 512 * 1024;
     }
     if (maxbytes > INT_MAX / 2) {
         maxbytes = INT_MAX / 2;
@@ -1102,7 +1153,7 @@ slotsmgrtAsyncGenericCommand(client *c, int usetag, int usekey) {
             return;
         }
         if (numkeys == 0) {
-            numkeys = 128;
+            numkeys = 100;
         }
     }
 
@@ -1124,17 +1175,22 @@ slotsmgrtAsyncGenericCommand(client *c, int usetag, int usekey) {
     batchedObjectIterator *it = createBatchedObjectIterator(hash_slot,
             usetag ? c->db->tagged_keys : NULL, timeout, maxbulks, maxbytes);
     if (!usekey) {
-        if (dictIsRehashing(hash_slot)) {
-            dictRehash(hash_slot, 1);
-        } else if (htNeedsResize(hash_slot)) {
-            dictResize(hash_slot);
-        }
         void *pd[] = {it, c->db, &numkeys};
-        for (int i = 2; i != 0 && dictSize(it->keys) == 0; i --) {
-            unsigned long cursor = (i != 1) ? random() : 0;
-            int loop = numkeys * 5;
-            if (loop < 32) {
-                loop = 32;
+        for (int i = 2; i >= 0 && it->estimate_msgs < numkeys; i --) {
+            unsigned long cursor = 0;
+            if (i != 0) {
+                cursor = random();
+            } else {
+                if (htNeedsResize(hash_slot)) {
+                    dictResize(hash_slot);
+                }
+            }
+            if (dictIsRehashing(hash_slot)) {
+                dictRehash(hash_slot, 50);
+            }
+            int loop = numkeys * 10;
+            if (loop < 100) {
+                loop = 100;
             }
             do {
                 cursor = dictScan(hash_slot, cursor, batchedObjectIteratorAddKeyCallback, pd);
@@ -1152,7 +1208,7 @@ slotsmgrtAsyncGenericCommand(client *c, int usetag, int usekey) {
     ac->timeout = timeout;
     ac->lastuse = mstime();
     ac->batched_iter = it;
-    ac->sending_msgs = slotsmgrtAsyncNextMessagesMicroseconds(ac, 500, 3);
+    ac->sending_msgs = slotsmgrtAsyncNextMessagesMicroseconds(ac, 3, 500);
 
     getSlotsmgrtAsyncClientMigrationStatusOrBlock(c, NULL, 1);
 
@@ -1668,7 +1724,7 @@ slotsrestoreAsyncAckHandle(client *c) {
 
     ac->lastuse = mstime();
     ac->sending_msgs -= 1;
-    ac->sending_msgs += slotsmgrtAsyncNextMessagesMicroseconds(ac, 500, 3);
+    ac->sending_msgs += slotsmgrtAsyncNextMessagesMicroseconds(ac, 2, 10);
 
     if (ac->sending_msgs != 0) {
         return C_OK;

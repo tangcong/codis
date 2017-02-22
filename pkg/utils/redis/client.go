@@ -22,6 +22,8 @@ type Client struct {
 	Addr string
 	Auth string
 
+	Database int
+
 	LastUse time.Time
 	Timeout time.Duration
 }
@@ -55,6 +57,10 @@ func (c *Client) Do(cmd string, args ...interface{}) (interface{}, error) {
 		return nil, errors.Trace(err)
 	}
 	c.LastUse = time.Now()
+
+	if err, ok := r.(redigo.Error); ok {
+		return nil, errors.Trace(err)
+	}
 	return r, nil
 }
 
@@ -75,7 +81,24 @@ func (c *Client) Receive() (interface{}, error) {
 		return nil, errors.Trace(err)
 	}
 	c.LastUse = time.Now()
+
+	if err, ok := r.(redigo.Error); ok {
+		return nil, errors.Trace(err)
+	}
 	return r, nil
+}
+
+func (c *Client) Select(database int) error {
+	if c.Database == database {
+		return nil
+	}
+	_, err := c.Do("SELECT", database)
+	if err != nil {
+		c.Close()
+		return errors.Trace(err)
+	}
+	c.Database = database
+	return nil
 }
 
 func (c *Client) Info() (map[string]string, error) {
@@ -96,9 +119,31 @@ func (c *Client) Info() (map[string]string, error) {
 	return info, nil
 }
 
+func (c *Client) InfoKeySpace() (map[int]string, error) {
+	text, err := redigo.String(c.Do("INFO", "keyspace"))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	info := make(map[int]string)
+	for _, line := range strings.Split(text, "\n") {
+		kv := strings.SplitN(line, ":", 2)
+		if len(kv) != 2 {
+			continue
+		}
+		if key := strings.TrimSpace(kv[0]); key != "" && strings.HasPrefix(key, "db") {
+			n, err := strconv.Atoi(key[2:])
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			info[n] = strings.TrimSpace(kv[1])
+		}
+	}
+	return info, nil
+}
+
 func (c *Client) InfoFull() (map[string]string, error) {
 	if info, err := c.Info(); err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	} else {
 		host := info["master_host"]
 		port := info["master_port"]
@@ -107,7 +152,7 @@ func (c *Client) InfoFull() (map[string]string, error) {
 		}
 		r, err := c.Do("CONFIG", "get", "maxmemory")
 		if err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 		p, err := redigo.Values(r, nil)
 		if err != nil || len(p) != 2 {
@@ -123,21 +168,22 @@ func (c *Client) InfoFull() (map[string]string, error) {
 }
 
 func (c *Client) SetMaster(master string) error {
+	var host, port string
 	if master == "" || strings.ToUpper(master) == "NO:ONE" {
-		if _, err := c.Do("SLAVEOF", "NO", "ONE"); err != nil {
-			return err
-		}
+		host, port = "NO", "ONE"
 	} else {
-		host, port, err := net.SplitHostPort(master)
+		_, err := c.Do("CONFIG", "set", "masterauth", c.Auth)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if _, err := c.Do("CONFIG", "set", "masterauth", c.Auth); err != nil {
-			return err
+		host, port, err = net.SplitHostPort(master)
+		if err != nil {
+			return errors.Trace(err)
 		}
-		if _, err := c.Do("SLAVEOF", host, port); err != nil {
-			return err
-		}
+	}
+	_, err := c.Do("SLAVEOF", host, port)
+	if err != nil {
+		return errors.Trace(err)
 	}
 	return nil
 }
@@ -149,7 +195,7 @@ func (c *Client) MigrateSlot(slot int, target string) (int, error) {
 	}
 	mseconds := int(c.Timeout / time.Millisecond)
 	if reply, err := c.Do("SLOTSMGRTTAGSLOT", host, port, mseconds, slot); err != nil {
-		return 0, err
+		return 0, errors.Trace(err)
 	} else {
 		p, err := redigo.Ints(redigo.Values(reply, nil))
 		if err != nil || len(p) != 2 {
@@ -173,7 +219,7 @@ func (c *Client) MigrateSlotAsync(slot int, target string, option *MigrateSlotAs
 	}
 	if reply, err := c.Do("SLOTSMGRTTAGSLOT-ASYNC", host, port, int(option.Timeout/time.Millisecond),
 		option.MaxBulks, option.MaxBytes, slot, option.NumKeys); err != nil {
-		return 0, err
+		return 0, errors.Trace(err)
 	} else {
 		p, err := redigo.Ints(redigo.Values(reply, nil))
 		if err != nil || len(p) != 2 {
@@ -185,7 +231,7 @@ func (c *Client) MigrateSlotAsync(slot int, target string, option *MigrateSlotAs
 
 func (c *Client) SlotsInfo() (map[int]int, error) {
 	if reply, err := c.Do("SLOTSINFO"); err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	} else {
 		infos, err := redigo.Values(reply, nil)
 		if err != nil {
@@ -371,24 +417,6 @@ func (p *Pool) InfoFull(addr string) (map[string]string, error) {
 	}
 	defer p.PutClient(c)
 	return c.InfoFull()
-}
-
-func (p *Pool) MigrateSlot(slot int, from, dest string) (int, error) {
-	c, err := p.GetClient(from)
-	if err != nil {
-		return 0, err
-	}
-	defer p.PutClient(c)
-	return c.MigrateSlot(slot, dest)
-}
-
-func (p *Pool) MigrateSlotAsync(slot int, from, dest string, option *MigrateSlotAsyncOption) (int, error) {
-	c, err := p.GetClient(from)
-	if err != nil {
-		return 0, err
-	}
-	defer p.PutClient(c)
-	return c.MigrateSlotAsync(slot, dest, option)
 }
 
 type InfoCache struct {
