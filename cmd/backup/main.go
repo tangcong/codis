@@ -6,13 +6,19 @@ import (
 	"github.com/CodisLabs/codis/pkg/utils"
 	"github.com/CodisLabs/codis/pkg/utils/log"
 	"github.com/docopt/docopt-go"
+	"io/ioutil"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"strconv"
+	"syscall"
 	"time"
 )
 
 func main() {
 	const usage = `
 Usage:
-	codis-backup [--ncpu=N [--max-ncpu=MAX]] [--config=CONF] [--log-level=LEVEL] [--host-admin=ADDR] [--host-proxy=ADDR] [--zookeeper=ADDR|--etcd=ADDR|--db=ADDR] [--pidfile=FILE]
+	codis-backup [--ncpu=N [--max-ncpu=MAX]] [--config=CONF] [--log=FILE] [--log-level=LEVEL] [--host-admin=ADDR] [--host-proxy=ADDR] [--zookeeper=ADDR|--etcd=ADDR|--db=ADDR] [--pidfile=FILE]
 	codis-backup --default-config
 	codis-backup --version
 
@@ -69,9 +75,33 @@ Options:
 	}
 	defer s.Close()
 
+	if s, ok := utils.Argument(d, "--pidfile"); ok {
+		if pidfile, err := filepath.Abs(s); err != nil {
+			log.WarnErrorf(err, "parse pidfile = '%s' failed", s)
+		} else if err := ioutil.WriteFile(pidfile, []byte(strconv.Itoa(os.Getpid())), 0644); err != nil {
+			log.WarnErrorf(err, "write pidfile = '%s' failed", pidfile)
+		} else {
+			defer func() {
+				if err := os.Remove(pidfile); err != nil {
+					log.WarnErrorf(err, "remove pidfile = '%s' failed", pidfile)
+				}
+			}()
+			log.Warnf("option --pidfile = %s", pidfile)
+		}
+	}
+
 	log.Warnf("create backup with config\n%s", config)
 
 	log.Warnf("[%p] backup is working ...", s)
+
+	go func() {
+		defer s.Close()
+		c := make(chan os.Signal, 1)
+		signal.Notify(c, syscall.SIGINT, syscall.SIGKILL, syscall.SIGTERM)
+
+		sig := <-c
+		log.Warnf("[%p] proxy receive signal = '%v'", s, sig)
+	}()
 
 	for !s.IsClosed() {
 		time.Sleep(time.Second)
