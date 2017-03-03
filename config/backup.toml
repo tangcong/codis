@@ -1,0 +1,52 @@
+
+##################################################
+#                                                #
+#                  Codis-Backup                   #
+#                                                #
+##################################################
+
+# Set bind address for admin(rpc), tcp only.
+admin_addr = "0.0.0.0:11080"
+
+# Set bind address for proxy, proto_type can be "tcp", "tcp4", "tcp6", "unix" or "unixpacket".
+proto_type = "tcp4"
+backup_addr = "0.0.0.0:20000"
+
+data_path = "qq-vip"
+
+# Set max number of alive sessions.
+backup_max_clients = 1000
+
+# Set max offheap memory size. (0 to disable)
+backup_max_offheap_size = "1024mb"
+
+# Set heap placeholder to reduce GC frequency.
+backup_heap_placeholder = "256mb"
+
+# Set backend recv buffer size & timeout.
+backend_recv_bufsize = "128kb"
+backend_recv_timeout = "30s"
+
+# Set backend send buffer & timeout.
+backend_send_bufsize = "128kb"
+backend_send_timeout = "30s"
+
+# If there is no request from client for a long time, the connection will be closed. (0 to disable)
+# Set session recv buffer size & timeout.
+session_recv_bufsize = "128kb"
+session_recv_timeout = "30m"
+
+# Set session send buffer size & timeout.
+session_send_bufsize = "64kb"
+session_send_timeout = "30s"
+
+# Make sure this is higher than the max number of requests for each pipeline request, or your client may be blocked.
+# Set session pipeline buffer size.
+session_max_pipeline = 1024
+
+# Set session tcp keepalive period. (0 to disable)
+session_keepalive_period = "75s"
+
+# Set session to be sensitive to failures. Default is false, instead of closing socket, proxy will send an error response to client.
+session_break_on_failure = false
+

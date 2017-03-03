@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package codis.backup.v1;
+
+service Log {
+	rpc Append(WriteRequest) returns (WriteResponse) {}
+}
+
+message WriteRequest {
+    string product = 1;
+	string command = 2;
+    int64 time = 3;
+}
+
+message WriteResponse {
+	enum WritingStatus {
+		UNKNOWN = 0;
+		OK = 1;
+		FAIL = 2;
+	}
+	WritingStatus status = 1;
+}
