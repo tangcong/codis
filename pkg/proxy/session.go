@@ -21,8 +21,7 @@ import (
 
 type Session struct {
 	Conn *redis.Conn
-
-	Ops int64
+	Ops  int64
 
 	CreateUnix int64
 	LastOpUnix int64
@@ -44,6 +43,7 @@ type Session struct {
 
 	broken atomic2.Bool
 	config *Config
+	tasks  chan *Request
 
 	authorized bool
 }
@@ -62,7 +62,7 @@ func (s *Session) String() string {
 	return string(b)
 }
 
-func NewSession(sock net.Conn, config *Config) *Session {
+func NewSession(sock net.Conn, config *Config, tasks chan *Request) *Session {
 	c := redis.NewConn(sock,
 		config.SessionRecvBufsize.Int(),
 		config.SessionSendBufsize.Int(),
@@ -74,7 +74,9 @@ func NewSession(sock net.Conn, config *Config) *Session {
 	s := &Session{
 		Conn: c, config: config,
 		CreateUnix: time.Now().Unix(),
+		tasks:      tasks,
 	}
+
 	s.stats.opmap = make(map[string]*opStats, 16)
 	log.Infof("session [%p] create: %s", s, s)
 	return s
@@ -266,6 +268,10 @@ func (s *Session) handleRequest(r *Request, d *Router) error {
 			return nil
 		}
 		s.authorized = true
+	}
+
+	if flag == FlagWrite && len(s.tasks) < 10240 {
+		s.tasks <- r
 	}
 
 	switch opstr {

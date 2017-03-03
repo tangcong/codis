@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/CodisLabs/codis/pkg/models"
+	redisapi "github.com/CodisLabs/codis/pkg/proxy/redis"
 	"github.com/CodisLabs/codis/pkg/utils"
 	"github.com/CodisLabs/codis/pkg/utils/errors"
 	"github.com/CodisLabs/codis/pkg/utils/log"
@@ -46,6 +47,9 @@ type Proxy struct {
 	lproxy net.Listener
 	ladmin net.Listener
 	xjodis *Jodis
+
+	tasks     chan *Request
+	responses chan *Request
 
 	ha struct {
 		monitor *redis.Sentinel
@@ -83,6 +87,8 @@ func New(config *Config) (*Proxy, error) {
 		s.model.Sys = strings.TrimSpace(string(b))
 	}
 	s.model.Hostname = utils.Hostname
+	s.tasks = make(chan *Request, 10240)
+	s.responses = make(chan *Request, 10240)
 
 	if err := s.setup(config); err != nil {
 		s.Close()
@@ -95,6 +101,7 @@ func New(config *Config) (*Proxy, error) {
 
 	go s.serveAdmin()
 	go s.serveProxy()
+	go s.logLoopWriter()
 
 	s.startMetricsJson()
 	s.startMetricsInfluxdb()
@@ -195,6 +202,9 @@ func (s *Proxy) Close() error {
 	if s.ha.monitor != nil {
 		s.ha.monitor.Cancel()
 	}
+
+	close(s.tasks)
+
 	return nil
 }
 
@@ -408,7 +418,7 @@ func (s *Proxy) serveProxy() {
 			if err != nil {
 				return err
 			}
-			NewSession(c, s.config).Start(s.router)
+			NewSession(c, s.config, s.tasks).Start(s.router)
 		}
 	}(s.lproxy)
 
@@ -625,4 +635,72 @@ func (s *Proxy) Stats(flags StatsFlags) *Stats {
 		stats.Runtime.MemOffheap = unsafe2.OffheapBytes()
 	}
 	return stats
+}
+
+func (s *Proxy) makeLogConn() (*redisapi.Conn, error) {
+	c, err := redisapi.DialTimeout(s.config.BackupAddr, time.Second*5,
+		s.config.BackendRecvBufsize.Int(),
+		s.config.BackendSendBufsize.Int())
+	if err != nil {
+		return nil, err
+	}
+	c.ReaderTimeout = s.config.BackendRecvTimeout.Get()
+	c.WriterTimeout = s.config.BackendSendTimeout.Get()
+	c.SetKeepAlivePeriod(s.config.BackendKeepAlivePeriod.Get())
+	return c, nil
+}
+
+func (s *Proxy) logLoopWriter() {
+	if s.IsClosed() {
+		return
+	}
+	defer s.Close()
+
+	var p *redisapi.FlushEncoder
+	var c *redisapi.Conn
+	var err error
+
+	for r := range s.tasks {
+		if c == nil {
+			c, err = s.makeLogConn()
+			if err != nil {
+				time.Sleep(time.Second)
+				continue
+			} else {
+				go s.logLoopReader(c)
+			}
+		}
+		if p == nil {
+			p = c.FlushEncoder()
+			p.MaxInterval = time.Millisecond
+			p.MaxBuffered = math2.MinInt(256, cap(s.tasks))
+		}
+		if err := p.EncodeMultiBulk(r.Multi); err != nil {
+			log.WarnErrorf(err, "backup conn failure, %p", s)
+			c.Close()
+			c, p = nil, nil
+			continue
+		}
+		if err := p.Flush(len(s.tasks) == 0); err != nil {
+			log.WarnErrorf(err, "backup conn failure, %p", s)
+			c.Close()
+			c, p = nil, nil
+			continue
+		}
+		if len(s.responses) < 10240 {
+			s.responses <- r
+		}
+	}
+}
+
+func (s *Proxy) logLoopReader(c *redisapi.Conn) {
+
+	for r := range s.responses {
+		if c != nil {
+			if resp, err := c.Decode(); err != nil {
+				log.WarnErrorf(err, "command = %s, %v,decode failure, %s\n", r.Multi[0], resp, err)
+				return
+			}
+		}
+	}
 }

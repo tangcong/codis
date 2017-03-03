@@ -31,6 +31,7 @@ admin_addr = "0.0.0.0:11080"
 # Set bind address for proxy, proto_type can be "tcp", "tcp4", "tcp6", "unix" or "unixpacket".
 proto_type = "tcp4"
 proxy_addr = "0.0.0.0:19000"
+backup_addr = "0.0.0.0:20000"
 
 # Set jodis address & session timeout, only accept "zookeeper" & "etcd".
 jodis_name = ""
@@ -109,9 +110,10 @@ metrics_report_influxdb_database = ""
 `
 
 type Config struct {
-	ProtoType string `toml:"proto_type" json:"proto_type"`
-	ProxyAddr string `toml:"proxy_addr" json:"proxy_addr"`
-	AdminAddr string `toml:"admin_addr" json:"admin_addr"`
+	ProtoType  string `toml:"proto_type" json:"proto_type"`
+	ProxyAddr  string `toml:"proxy_addr" json:"proxy_addr"`
+	BackupAddr string `toml:"backup_addr" json:"backup_addr"`
+	AdminAddr  string `toml:"admin_addr" json:"admin_addr"`
 
 	HostProxy string `toml:"-" json:"-"`
 	HostAdmin string `toml:"-" json:"-"`

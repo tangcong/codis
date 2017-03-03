@@ -1,8 +1,9 @@
 .DEFAULT_GOAL := build-all
+#.DEFAULT_GOAL := codis-backup 
 
 export GO15VENDOREXPERIMENT=1
 
-build-all: codis-server codis-dashboard codis-proxy codis-admin codis-ha codis-fe clean-gotest
+build-all: codis-server codis-dashboard codis-proxy codis-admin codis-ha codis-fe codis-backup clean-gotest
 
 codis-deps:
 	@mkdir -p bin config && bash version
@@ -25,6 +26,9 @@ codis-ha: codis-deps
 codis-fe: codis-deps
 	go build -i -o bin/codis-fe ./cmd/fe
 	@rm -rf bin/assets; cp -rf cmd/fe/assets bin/
+
+codis-backup: codis-deps
+	go build -i -o bin/codis-backup ./cmd/backup
 
 codis-server:
 	@mkdir -p bin
