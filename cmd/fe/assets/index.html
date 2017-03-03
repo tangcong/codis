@@ -422,7 +422,11 @@
                                 [[group.id]]
                             </span>
                         </th>
-                        <th style="min-width: 190px;">Server</th>
+                        <th style="min-width: 190px;"> Server
+                            <span ng-if="group.ha_warning != ''" style="color: white; background-color: red">
+                                    [[group.ha_warning]]
+                            </span>
+                        </th>
                         <th style="min-width: 100px;">Data Center</th>
                         <th style="min-width: 180px;">
                             <span ng-switch="group.out_of_sync">
@@ -510,26 +514,26 @@
                             <span ng-switch="server.ha_status">
                                 <span ng-switch-when="ha_master" style="color: darkgreen"
                                     data-toggle="tooltip" data-placement="right" title="HA: MASTER">
-                                    [[server.server]]
+                                    [[server.server_text]]
                                 </span>
                                 <span ng-switch-when="ha_real_master" style="color: white; background-color: darkgreen"
                                     data-toggle="tooltip" data-placement="right" title="HA: REAL MASTER">
-                                    [[server.server]]
+                                    [[server.server_text]]
                                 </span>
                                 <span ng-switch-when="ha_not_master" style="color: white; background-color: red"
                                     data-toggle="tooltip" data-placement="right" title="HA: NOT MASTER">
-                                    [[server.server]]
+                                    [[server.server_text]]
                                 </span>
                                 <span ng-switch-when="ha_slave"
                                     data-toggle="tooltip" data-placement="right" title="HA: SLAVE">
-                                    [[server.server]]
+                                    [[server.server_text]]
                                 </span>
                                 <span ng-switch-when="ha_defined" style="color: white; background-color: darkgray"
                                     data-toggle="tooltip" data-placement="right" title="HA: UNDEFINED">
-                                    [[server.server]]
+                                    [[server.server_text]]
                                 </span>
                                 <span ng-switch-default>
-                                    [[server.server]]
+                                    [[server.server_text]]
                                 </span>
                             </span>
                         </td>
@@ -678,9 +682,10 @@
                             </span>
                         </th>
                         <th style="min-width: 35px;"/>
-                        <th style="min-width: 560px;">
+                        <th style="min-width: 350px;">
                             Status
                         </th>
+                        <th style="min-width: 35px;"/>
                         <th style="min-width: 35px;"/>
                     </tr>
                     </thead>
@@ -706,6 +711,10 @@
                             <span ng-switch-when="TIMEOUT" class="status_label_warning">[[sentinel.status]]</span>
                             <span ng-switch-when="PENDING" class="status_label_pending">[[sentinel.status]]</span>
                             <span ng-switch-default>[[sentinel.status_text]]</span>
+                        </td>
+                        <td ng-switch="sentinel.runid_error != ''">
+                            <span ng-switch-when="true" style="color: red">[[sentinel.runid_error]]</span>
+                            <span ng-switch-default/>
                         </td>
                         <td class="button_tight_column">
                             <button class="btn btn-danger btn-xs active"

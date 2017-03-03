@@ -20,9 +20,6 @@ codis-proxy: codis-deps
 codis-admin: codis-deps
 	go build -i -o bin/codis-admin ./cmd/admin
 
-codis-ha: codis-deps
-	go build -i -o bin/codis-ha ./cmd/ha
-
 codis-fe: codis-deps
 	go build -i -o bin/codis-fe ./cmd/fe
 	@rm -rf bin/assets; cp -rf cmd/fe/assets bin/

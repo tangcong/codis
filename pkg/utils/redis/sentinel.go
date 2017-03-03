@@ -330,7 +330,7 @@ func (s *Sentinel) Masters(groups map[int]bool, timeout time.Duration, sentinels
 		if alive == 0 {
 			if cntx.Err() == context.Canceled {
 				s.printf("sentinel masters canceled (%v)", cntx.Err())
-				return nil, cntx.Err()
+				return nil, errors.Trace(cntx.Err())
 			} else if voted != len(sentinels) || len(masters) != len(groups) {
 				s.printf("sentinel masters voted = (%d/%d) masters = (%d/%d) (%v)", voted, len(sentinels), len(masters), len(groups), cntx.Err())
 			}
@@ -343,7 +343,7 @@ func (s *Sentinel) Masters(groups map[int]bool, timeout time.Duration, sentinels
 		case <-cntx.Done():
 			if cntx.Err() == context.Canceled {
 				s.printf("sentinel masters canceled (%v)", cntx.Err())
-				return nil, cntx.Err()
+				return nil, errors.Trace(cntx.Err())
 			} else {
 				s.printf("sentinel masters voted = (%d/%d) masters = (%d/%d) (%v)", voted, len(sentinels), len(masters), len(groups), cntx.Err())
 			}
@@ -475,7 +475,7 @@ func (s *Sentinel) Monitor(groups map[int]string, config *MonitorConfig, timeout
 		} else {
 			s.printf("sentinel montior resolve tcp address (%v)", cntx.Err())
 		}
-		return cntx.Err()
+		return errors.Trace(cntx.Err())
 	case err := <-exit:
 		if err != nil {
 			return err
@@ -502,7 +502,7 @@ func (s *Sentinel) Monitor(groups map[int]string, config *MonitorConfig, timeout
 			if last != nil {
 				return last
 			}
-			return cntx.Err()
+			return errors.Trace(cntx.Err())
 		case err := <-results:
 			if err != nil {
 				last = err
@@ -572,7 +572,7 @@ func (s *Sentinel) Unmonitor(groups map[int]bool, timeout time.Duration, sentine
 			if last != nil {
 				return last
 			}
-			return cntx.Err()
+			return errors.Trace(cntx.Err())
 		case err := <-results:
 			if err != nil {
 				last = err
@@ -587,22 +587,15 @@ type SentinelGroup struct {
 	Slaves []map[string]string `json:"slaves,omitempty"`
 }
 
-func (s *Sentinel) MastersAndSlaves(sentinel string, timeout time.Duration) (map[string]*SentinelGroup, error) {
-	c, err := NewClientNoAuth(sentinel, timeout)
+func (s *Sentinel) MastersAndSlavesClient(client *Client) (map[string]*SentinelGroup, error) {
+	masters, err := s.mastersCommand(client)
 	if err != nil {
 		return nil, err
 	}
-	defer c.Close()
-
-	masters, err := s.mastersCommand(c)
-	if err != nil {
-		return nil, err
-	}
-
-	var results = make(map[string]*SentinelGroup)
+	results := make(map[string]*SentinelGroup)
 	for _, master := range masters {
 		var name = master["name"]
-		slaves, err := s.slavesCommand(c, name)
+		slaves, err := s.slavesCommand(client, name)
 		if err != nil {
 			return nil, err
 		}
@@ -611,6 +604,15 @@ func (s *Sentinel) MastersAndSlaves(sentinel string, timeout time.Duration) (map
 		}
 	}
 	return results, nil
+}
+
+func (s *Sentinel) MastersAndSlaves(sentinel string, timeout time.Duration) (map[string]*SentinelGroup, error) {
+	c, err := NewClientNoAuth(sentinel, timeout)
+	if err != nil {
+		return nil, err
+	}
+	defer c.Close()
+	return s.MastersAndSlavesClient(c)
 }
 
 func (s *Sentinel) FlushConfig(sentinel string) error {
