@@ -124,6 +124,7 @@ func New(client models.Client, config *Config) (*Topom, error) {
 }
 
 func (s *Topom) setup(config *Config) error {
+	log.Warnf("config admin addr is %v\n", config.AdminAddr)
 	if l, err := net.Listen("tcp", config.AdminAddr); err != nil {
 		return errors.Trace(err)
 	} else {

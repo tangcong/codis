@@ -25,8 +25,13 @@ const DefaultConfig = `
 product_name = "codis-demo"
 product_auth = ""
 
+product_from = "coordinator"
+
+bind_itf = "eth0"
+
 # Set bind address for admin(rpc), tcp only.
 admin_addr = "0.0.0.0:11080"
+proxy_port = 19000 
 
 # Set bind address for proxy, proto_type can be "tcp", "tcp4", "tcp6", "unix" or "unixpacket".
 proto_type = "tcp4"
@@ -114,7 +119,9 @@ type Config struct {
 	ProxyAddr  string `toml:"proxy_addr" json:"proxy_addr"`
 	BackupAddr string `toml:"backup_addr" json:"backup_addr"`
 	AdminAddr  string `toml:"admin_addr" json:"admin_addr"`
+	ProxyPort  int    `toml:"proxy_port" json:"proxy_port"`
 
+	BindItf   string `toml:"bind_itf" json:"bind_itf"`
 	HostProxy string `toml:"-" json:"-"`
 	HostAdmin string `toml:"-" json:"-"`
 
@@ -125,6 +132,7 @@ type Config struct {
 
 	ProductName string `toml:"product_name" json:"product_name"`
 	ProductAuth string `toml:"product_auth" json:"-"`
+	ProductFrom string `toml:"product_from" json:"product_from"`
 
 	ProxyDataCenter      string         `toml:"proxy_datacenter" json:"proxy_datacenter"`
 	ProxyMaxClients      int            `toml:"proxy_max_clients" json:"proxy_max_clients"`

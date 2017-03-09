@@ -150,6 +150,29 @@ Options:
 		log.Warnf("option --%s = %s", coordinator.name, coordinator.addr)
 	}
 
+	if config.ProductFrom == "coordinator" {
+
+		client, err := models.NewClient(coordinator.name, coordinator.addr, time.Minute)
+		if err != nil {
+			log.PanicErrorf(err, "create '%s' client to '%s' failed", coordinator.name, coordinator.addr)
+		}
+		defer client.Close()
+		localIp, err := utils.LookupItfAddr(config.BindItf)
+		if err != nil {
+			log.PanicErrorf(err, "lookup itf addr failed")
+		}
+		config.ProxyAddr = localIp + ":" + strconv.Itoa(config.ProxyPort)
+		store := models.NewStore(client, "__config__")
+		cluster, err := store.LoadProxyProduct(config.ProxyAddr, true)
+		if err != nil {
+			log.PanicErrorf(err, "load proxy product failed")
+		}
+		log.Warnf("read product from coordinator,local ip is %s,cluster config is %s\n", localIp, cluster)
+		config.ProductName = cluster.ProductName
+		config.ProductAuth = cluster.ProductAuth
+		dashboard = cluster.DashboardAddr
+	}
+
 	var slots []*models.Slot
 	if s, ok := utils.Argument(d, "--fillslots"); ok {
 		b, err := ioutil.ReadFile(s)

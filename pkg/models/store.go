@@ -58,6 +58,14 @@ func SentinelPath(product string) string {
 	return filepath.Join(CodisDir, product, "sentinel")
 }
 
+func DashboardProductPath(product string, addr string) string {
+	return filepath.Join(CodisDir, product, "dashboard", addr)
+}
+
+func ProxyProductPath(product string, addr string) string {
+	return filepath.Join(CodisDir, product, "proxy", addr)
+}
+
 func LoadTopom(client Client, product string, must bool) (*Topom, error) {
 	b, err := client.Read(LockPath(product), must)
 	if err != nil || b == nil {
@@ -93,6 +101,14 @@ func (s *Store) LockPath() string {
 
 func (s *Store) SlotPath(sid int) string {
 	return SlotPath(s.product, sid)
+}
+
+func (s *Store) DashboardProductPath(addr string) string {
+	return DashboardProductPath(s.product, addr)
+}
+
+func (s *Store) ProxyProductPath(addr string) string {
+	return ProxyProductPath(s.product, addr)
 }
 
 func (s *Store) GroupDir() string {
@@ -253,6 +269,30 @@ func (s *Store) LoadSentinel(must bool) (*Sentinel, error) {
 
 func (s *Store) UpdateSentinel(p *Sentinel) error {
 	return s.client.Update(s.SentinelPath(), p.Encode())
+}
+
+func (s *Store) LoadDashboardProduct(addr string, must bool) (*ClusterConfig, error) {
+	b, err := s.client.Read(s.DashboardProductPath(addr), must)
+	if err != nil || b == nil {
+		return nil, err
+	}
+	p := &ClusterConfig{}
+	if err := jsonDecode(p, b); err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+func (s *Store) LoadProxyProduct(addr string, must bool) (*ClusterConfig, error) {
+	b, err := s.client.Read(s.ProxyProductPath(addr), must)
+	if err != nil || b == nil {
+		return nil, err
+	}
+	p := &ClusterConfig{}
+	if err := jsonDecode(p, b); err != nil {
+		return nil, err
+	}
+	return p, nil
 }
 
 func ValidateProduct(name string) error {

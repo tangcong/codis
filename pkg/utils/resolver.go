@@ -7,12 +7,33 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"golang.org/x/net/context"
 
 	"github.com/CodisLabs/codis/pkg/utils/errors"
+	"github.com/CodisLabs/codis/pkg/utils/log"
 )
+
+var ErrLookupItfAddr = errors.New("Lookup Interface Addr Failed")
+
+func LookupItfAddr(name string) (string, error) {
+	ift, err := net.InterfaceByName(name)
+	if err != nil {
+		log.Warnf("get interface addr by name fail,%v\n", ift)
+	} else {
+		addr, err := ift.Addrs()
+		if err != nil || len(addr) < 2 {
+			log.Warnf("get %s addr fail,%s\n", name, err)
+		} else {
+			localIp := (strings.Split(addr[0].String(), "/"))[0]
+			log.Warnf("interface name:%s,addr is:%s\n", name, localIp)
+			return localIp, nil
+		}
+	}
+	return "", ErrLookupItfAddr
+}
 
 func LookupIP(host string) []net.IP {
 	ipAddrs, _ := net.LookupIP(host)
@@ -85,6 +106,7 @@ func init() {
 }
 
 func ReplaceUnspecifiedIP(network string, listenAddr, globalAddr string) (string, error) {
+	log.Warnf("network is %s,listen addr is %s,global addr is %s\n", network, listenAddr, globalAddr)
 	if globalAddr == "" {
 		return replaceUnspecifiedIP(network, listenAddr, true)
 	} else {
@@ -100,6 +122,7 @@ func replaceUnspecifiedIP(network string, address string, replace bool) (string,
 		return address, nil
 	case "tcp", "tcp4", "tcp6":
 		tcpAddr, err := net.ResolveTCPAddr(network, address)
+		log.Warnf("tcp addr is %v\n", tcpAddr)
 		if err != nil {
 			return "", errors.Trace(err)
 		}

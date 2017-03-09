@@ -33,6 +33,10 @@ func (t *cmdAdmin) Main(d map[string]interface{}) {
 		t.handleConfigRestore(d)
 	case d["--dashboard-list"].(bool):
 		t.handleDashboardList(d)
+	case d["--add-product"].(bool):
+		t.handleAddProduct(d)
+	case d["--add-proxy"].(bool):
+		t.handleAddProxy(d)
 	}
 }
 
@@ -426,4 +430,40 @@ func (t *cmdAdmin) handleDashboardList(d map[string]interface{}) {
 	} else {
 		fmt.Println(string(b))
 	}
+}
+
+func (t *cmdAdmin) handleAddProduct(d map[string]interface{}) {
+	log.Warnf("add product start!")
+	client := t.newTopomClient(d)
+	defer client.Close()
+
+	cluster := models.ClusterConfig{}
+	cluster.ProductName = d["--product"].(string)
+	cluster.ProductAuth = d["--product-auth"].(string)
+	cluster.DashboardAddr = d["--product-dashboard"].(string)
+
+	value, err := json.MarshalIndent(&cluster, "", " ")
+	err = client.Create(models.DashboardProductPath("__config__", cluster.DashboardAddr), value)
+	if err != nil {
+		log.PanicErrorf(err, "add products failed")
+	}
+	log.Warnf("add product end!")
+}
+
+func (t *cmdAdmin) handleAddProxy(d map[string]interface{}) {
+	log.Warnf("add proxy start!")
+	client := t.newTopomClient(d)
+	defer client.Close()
+
+	cluster := models.ClusterConfig{}
+	cluster.ProductName = d["--product"].(string)
+	cluster.ProductAuth = d["--product-auth"].(string)
+	cluster.DashboardAddr = d["--product-dashboard"].(string)
+
+	value, err := json.MarshalIndent(&cluster, "", " ")
+	err = client.Create(models.ProxyProductPath("__config__", d["--proxy-addr"].(string)), value)
+	if err != nil {
+		log.PanicErrorf(err, "add proxy failed")
+	}
+	log.Warnf("add proxy end!")
 }

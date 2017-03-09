@@ -94,6 +94,22 @@ Options:
 	}
 	defer client.Close()
 
+	if config.ProductFrom == "coordinator" {
+		localIp, err := utils.LookupItfAddr(config.BindItf)
+		if err != nil {
+			log.PanicErrorf(err, "lookup itf addr failed")
+		}
+		config.AdminAddr = localIp + ":" + strconv.Itoa(config.AdminPort)
+		store := models.NewStore(client, "__config__")
+		cluster, err := store.LoadDashboardProduct(config.AdminAddr, true)
+		if err != nil {
+			log.PanicErrorf(err, "load dashboard product failed")
+		}
+		log.Warnf("read product from coordinator,local ip is %s,cluster config is %s\n", localIp, cluster)
+		config.ProductName = cluster.ProductName
+		config.ProductAuth = cluster.ProductAuth
+	}
+
 	s, err := topom.New(client, config)
 	if err != nil {
 		log.PanicErrorf(err, "create topom with config file failed\n%s", config)

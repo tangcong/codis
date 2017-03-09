@@ -29,9 +29,13 @@ coordinator_addr = "127.0.0.1:2181"
 # Set Codis Product Name/Auth.
 product_name = "codis-demo"
 product_auth = ""
+product_from = "coordinator"
+
+bind_itf = "eth0"
 
 # Set bind address for admin(rpc), tcp only.
 admin_addr = "0.0.0.0:18080"
+admin_port = 18080
 
 # Set arguments for data migration (only accept 'sync' & 'semi-async').
 migration_method = "semi-async"
@@ -53,12 +57,15 @@ type Config struct {
 	CoordinatorName string `toml:"coordinator_name" json:"coordinator_name"`
 	CoordinatorAddr string `toml:"coordinator_addr" json:"coordinator_addr"`
 
+	BindItf   string `toml:"bind_itf" json:"bind_itf"`
 	AdminAddr string `toml:"admin_addr" json:"admin_addr"`
+	AdminPort int    `toml:"admin_port" json:"admin_port"`
 
 	HostAdmin string `toml:"-" json:"-"`
 
 	ProductName string `toml:"product_name" json:"product_name"`
 	ProductAuth string `toml:"product_auth" json:"-"`
+	ProductFrom string `toml:"product_from" json:"-"`
 
 	MigrationMethod        string            `toml:"migration_method" json:"migration_method"`
 	MigrationAsyncMaxBulks int               `toml:"migration_async_maxbulks" json:"migration_async_maxbulks"`
