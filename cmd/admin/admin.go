@@ -438,9 +438,9 @@ func (t *cmdAdmin) handleAddProduct(d map[string]interface{}) {
 	defer client.Close()
 
 	cluster := models.ClusterConfig{}
-	cluster.ProductName = d["--product"].(string)
-	cluster.ProductAuth = d["--product-auth"].(string)
-	cluster.DashboardAddr = d["--product-dashboard"].(string)
+	cluster.ProductName = utils.ArgumentMust(d, "--product")
+	cluster.ProductAuth = utils.ArgumentMust(d, "--product-auth")
+	cluster.DashboardAddr = utils.ArgumentMust(d, "--product-dashboard")
 
 	value, err := json.MarshalIndent(&cluster, "", " ")
 	err = client.Create(models.DashboardProductPath("__config__", cluster.DashboardAddr), value)
@@ -456,12 +456,12 @@ func (t *cmdAdmin) handleAddProxy(d map[string]interface{}) {
 	defer client.Close()
 
 	cluster := models.ClusterConfig{}
-	cluster.ProductName = d["--product"].(string)
-	cluster.ProductAuth = d["--product-auth"].(string)
-	cluster.DashboardAddr = d["--product-dashboard"].(string)
+	cluster.ProductName = utils.ArgumentMust(d, "--product")
+	cluster.ProductAuth = utils.ArgumentMust(d, "--product-auth")
+	cluster.DashboardAddr = utils.ArgumentMust(d, "--product-dashboard")
 
 	value, err := json.MarshalIndent(&cluster, "", " ")
-	err = client.Create(models.ProxyProductPath("__config__", d["--proxy-addr"].(string)), value)
+	err = client.Create(models.ProxyProductPath("__config__", utils.ArgumentMust(d, "--proxy-addr")), value)
 	if err != nil {
 		log.PanicErrorf(err, "add proxy failed")
 	}
