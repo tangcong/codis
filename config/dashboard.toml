@@ -6,6 +6,8 @@
 ##################################################
 
 # Set Coordinator, only accept "zookeeper" & "etcd" & "filesystem".
+# coordinator_name = "db"
+# coordinator_addr = "usr:pwd@tcp(127.0.0.1:3306)/codis?charset=utf8"
 coordinator_name = "zookeeper"
 coordinator_addr = "127.0.0.1:2181"
 
