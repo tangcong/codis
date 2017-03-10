@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/CodisLabs/codis/pkg/models"
-	"github.com/CodisLabs/codis/pkg/proxy"
 	"github.com/CodisLabs/codis/pkg/utils"
 	"github.com/CodisLabs/codis/pkg/utils/errors"
 	"github.com/CodisLabs/codis/pkg/utils/log"
@@ -190,16 +189,16 @@ func (s *Backup) serveBackup() {
 }
 
 func (s *Backup) acceptConn(l net.Listener) (net.Conn, error) {
-	var delay = &proxy.DelayExp2{
-		Min: 10, Max: 500,
-		Unit: time.Millisecond,
-	}
+	//var delay = &proxy.DelayExp2{
+	//	Min: 10, Max: 500,
+	//	Unit: time.Millisecond,
+	//}
 	for {
 		c, err := l.Accept()
 		if err != nil {
 			if e, ok := err.(net.Error); ok && e.Temporary() {
 				log.WarnErrorf(err, "[%p] backup accept new connection failed", s)
-				delay.Sleep()
+				//delay.Sleep()
 				continue
 			}
 		}

@@ -1,15 +1,13 @@
-syntax = "proto3";
+syntax = "proto2";
 
-package codis.backup.v1;
-
-service Log {
-	rpc Append(WriteRequest) returns (WriteResponse) {}
-}
+package backup;
 
 message WriteRequest {
-    string product = 1;
-	string command = 2;
-    int64 time = 3;
+    required string productName = 1;
+	repeated string multiCmd = 2;
+    optional int64  updateTime = 3;
+    optional uint64 masterOffset = 4;
+    optional uint64 slaveOffset = 5;
 }
 
 message WriteResponse {
@@ -18,5 +16,6 @@ message WriteResponse {
 		OK = 1;
 		FAIL = 2;
 	}
-	WritingStatus status = 1;
+	required WritingStatus status = 1;
+    required int32 cmds = 2;
 }

@@ -1,0 +1,79 @@
+--- /home/ubuntu/codis/extern/redis-3.2.7/src/redis-benchmark.c 2017-02-08 10:57:29.369492555 +0800
++++ /home/ubuntu/redis/src/redis-benchmark.c    2017-02-13 13:40:39.151960466 +0800
+@@ -186,6 +186,10 @@
+}
+}
+
++#define latencytotal 1000
++
++static long long latencyslots[latencytotal] = {0};
++
+static void readHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
+    client c = privdata;
+    void *reply = NULL;
+    @@ -241,8 +245,13 @@
+        continue;
+}
+
+-                if (config.requests_finished < config.requests)
+    +                if (config.requests_finished < config.requests) {
+        config.latency[config.requests_finished++] = c->latency;
+        +                    int n = c->latency / 1000;
+        +                    if (n < latencytotal) {
+            +                        latencyslots[n] ++;
+            +                    }
+        +                }
+        c->pending--;
+        if (c->pending == 0) {
+            clientDone(c);
+            @@ -622,13 +631,45 @@
+                if (config.idlemode == 1) {
+                    printf("clients: %d\r", config.liveclients);
+                    fflush(stdout);
+                    -   return 250;
+                    +   return 1000;
+                    +    }
+            +
+                +    long long finished = config.requests_finished;
+            +    if (finished == 0) {
+                +        printf("%20lld %10lld\n", mstime(), finished);
+                +    } else {
+                    +        int pct99 = finished * 0.99;
+                    +        int pct95 = finished * 0.95;
+                    +        int i = 0;
+                    +        int count = 0;
+                    +        int i_95 = -1;
+                    +        int i_99 = -1;
+                    +        for (i = 0; i < latencytotal && i_99 < 0; i ++) {
+                        +            count += latencyslots[i];
+                        +            if (i_95 < 0) {
+                            +                if (count >= pct95) {
+                                +                    i_95 = i;
+                                +                }
+                            +            }
+                        +            if (i_99 < 0) {
+                            +                if (count >= pct99) {
+                                +                    i_99 = i;
+                                +                }
+                            +            }
+                        +        }
+                    +        printf("%20lld %10lld", mstime(), finished);
+                    +        if (i_95 >= 0) {
+                        +            printf(" %4d", i_95);
+                        +        }
+                    +        if (i_99 >= 0) {
+                        +            printf(" %4d", i_99);
+                        +        }
+                    +        printf("\n");
+                    +        config.requests_finished = 0;
+                }
+            -    float dt = (float)(mstime()-config.start)/1000.0;
+            -    float rps = (float)config.requests_finished/dt;
+            -    printf("%s: %.2f\r", config.title, rps);
+            fflush(stdout);
+            -    return 250; /* every 250ms */
+            +    memset(latencyslots, 0, sizeof(latencyslots));
+            +    return 1000; /* every 250ms */
+        }
+
+/* Return true if the named test was selected using the -t command line

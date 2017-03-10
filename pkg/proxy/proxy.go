@@ -16,8 +16,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/CodisLabs/codis/pkg/backup"
 	"github.com/CodisLabs/codis/pkg/models"
-	redisapi "github.com/CodisLabs/codis/pkg/proxy/redis"
 	"github.com/CodisLabs/codis/pkg/utils"
 	"github.com/CodisLabs/codis/pkg/utils/errors"
 	"github.com/CodisLabs/codis/pkg/utils/log"
@@ -48,8 +48,13 @@ type Proxy struct {
 	ladmin net.Listener
 	xjodis *Jodis
 
-	tasks     chan *Request
-	responses chan *Request
+	cmds    chan *Request
+	rsps    chan *backup.WriteRequest
+	req     *backup.WriteRequest
+	encoder *backup.FlushEncoder
+	conn    *backup.Conn
+	rcmd    uint64
+	scmd    uint64
 
 	ha struct {
 		monitor *redis.Sentinel
@@ -87,8 +92,11 @@ func New(config *Config) (*Proxy, error) {
 		s.model.Sys = strings.TrimSpace(string(b))
 	}
 	s.model.Hostname = utils.Hostname
-	s.tasks = make(chan *Request, 10240)
-	s.responses = make(chan *Request, 10240)
+	s.cmds = make(chan *Request, 10240)
+	s.rsps = make(chan *backup.WriteRequest, 10240)
+	s.req = &backup.WriteRequest{}
+	s.encoder = nil
+	s.conn = nil
 
 	if err := s.setup(config); err != nil {
 		s.Close()
@@ -101,7 +109,7 @@ func New(config *Config) (*Proxy, error) {
 
 	go s.serveAdmin()
 	go s.serveProxy()
-	go s.logLoopWriter()
+	go s.backupLoopWriter()
 
 	s.startMetricsJson()
 	s.startMetricsInfluxdb()
@@ -203,7 +211,7 @@ func (s *Proxy) Close() error {
 		s.ha.monitor.Cancel()
 	}
 
-	close(s.tasks)
+	close(s.cmds)
 
 	return nil
 }
@@ -418,7 +426,7 @@ func (s *Proxy) serveProxy() {
 			if err != nil {
 				return err
 			}
-			NewSession(c, s.config, s.tasks).Start(s.router)
+			NewSession(c, s.config, s.cmds).Start(s.router)
 		}
 	}(s.lproxy)
 
@@ -637,8 +645,9 @@ func (s *Proxy) Stats(flags StatsFlags) *Stats {
 	return stats
 }
 
-func (s *Proxy) makeLogConn() (*redisapi.Conn, error) {
-	c, err := redisapi.DialTimeout(s.config.BackupAddr, time.Second*5,
+func (s *Proxy) makeBackupConn() (*backup.Conn, error) {
+	log.Warnf("make backup conn,recv buf size:%d,send buf size:%d\n", s.config.BackendRecvBufsize.Int(), s.config.BackendSendBufsize.Int())
+	c, err := backup.DialTimeout(s.config.BackupAddr, time.Second*5,
 		s.config.BackendRecvBufsize.Int(),
 		s.config.BackendSendBufsize.Int())
 	if err != nil {
@@ -650,56 +659,103 @@ func (s *Proxy) makeLogConn() (*redisapi.Conn, error) {
 	return c, nil
 }
 
-func (s *Proxy) logLoopWriter() {
-	if s.IsClosed() {
-		return
-	}
-	defer s.Close()
-
-	var p *redisapi.FlushEncoder
-	var c *redisapi.Conn
-	var err error
-
-	for r := range s.tasks {
-		if c == nil {
-			c, err = s.makeLogConn()
+func (s *Proxy) backupLoopWriter() {
+	tick := time.Tick(500 * time.Millisecond)
+	for {
+		if s.IsClosed() {
+			return
+		}
+		defer s.Close()
+		select {
+		case <-tick:
+			fmt.Println("tick.")
+			err := s.sendCmds()
 			if err != nil {
-				time.Sleep(time.Second)
-				continue
-			} else {
-				go s.logLoopReader(c)
+				log.Warnf("send cmd failed,may lost messages!")
 			}
-		}
-		if p == nil {
-			p = c.FlushEncoder()
-			p.MaxInterval = time.Millisecond
-			p.MaxBuffered = math2.MinInt(256, cap(s.tasks))
-		}
-		if err := p.EncodeMultiBulk(r.Multi); err != nil {
-			log.WarnErrorf(err, "backup conn failure, %p", s)
-			c.Close()
-			c, p = nil, nil
-			continue
-		}
-		if err := p.Flush(len(s.tasks) == 0); err != nil {
-			log.WarnErrorf(err, "backup conn failure, %p", s)
-			c.Close()
-			c, p = nil, nil
-			continue
-		}
-		if len(s.responses) < 10240 {
-			s.responses <- r
+		case cmd := <-s.cmds:
+			err := s.pushCmd(cmd)
+			if err != nil {
+				log.Warnf("send cmd failed,may lost messages!")
+			}
+		default:
+			log.Warnf("sleep!")
+			time.Sleep(100 * time.Millisecond)
 		}
 	}
 }
 
-func (s *Proxy) logLoopReader(c *redisapi.Conn) {
+func (s *Proxy) pushCmd(cmd *Request) error {
+	s.req.ProductName = &s.config.ProductName
+	var buf string
+	for i, argv := range cmd.Multi {
+		if i > 0 {
+			buf += string("\n") + string(argv.Value)
+		} else {
+			buf = string(argv.Value)
+		}
+	}
+	s.req.MultiCmd = append(s.req.MultiCmd, buf)
+	if len(s.req.MultiCmd) >= 256 {
+		return s.sendCmds()
+	}
+	return nil
+}
 
-	for r := range s.responses {
+var ErrSendCmdFail = errors.New("Send Cmd Fail!")
+
+func (s *Proxy) sendCmds() error {
+	if len(s.req.MultiCmd) == 0 {
+		return nil
+	}
+	err := ErrSendCmdFail
+	for i := 0; i < 3; i++ {
+		if s.conn == nil {
+			s.conn, err = s.makeBackupConn()
+			if err != nil {
+				time.Sleep(time.Second)
+				continue
+			} else {
+				go s.backupLoopReader(s.conn)
+			}
+		}
+		if s.encoder == nil {
+			s.encoder = s.conn.FlushEncoder()
+			s.encoder.MaxInterval = time.Millisecond
+			s.encoder.MaxBuffered = math2.MinInt(256, cap(s.cmds))
+		}
+		if err := s.encoder.EncodeReq(s.req); err != nil {
+			log.WarnErrorf(err, "backup conn failure, %p", s)
+			s.conn.Close()
+			s.conn, s.encoder = nil, nil
+			continue
+		}
+		if err := s.encoder.Flush(len(s.cmds) == 0); err != nil {
+			log.WarnErrorf(err, "backup conn failure, %p", s)
+			s.conn.Close()
+			s.conn, s.encoder = nil, nil
+			continue
+		}
+		err = nil
+		break
+	}
+	if err == nil && len(s.rsps) < 10240 {
+		s.rsps <- s.req
+	}
+	s.req = &backup.WriteRequest{}
+	return err
+}
+
+func (s *Proxy) backupLoopReader(c *backup.Conn) {
+
+	for r := range s.rsps {
 		if c != nil {
-			if resp, err := c.Decode(); err != nil {
-				log.WarnErrorf(err, "command = %s, %v,decode failure, %s\n", r.Multi[0], resp, err)
+			if resp, err := c.DecodeRes(); err != nil {
+				log.WarnErrorf(err, "product = %s, commands = %d,status = %d,decode failure, %s\n", r.GetProductName(), len(r.MultiCmd), err)
 				return
+			} else {
+				//log.Warnf("product = %s, command num = %d,status = %d\n", r.Req.GetProductName(), resp.Res.GetCmds(), resp.Res.GetStatus())
+				s.scmd += uint64(resp.GetCmds())
 			}
 		}
 	}

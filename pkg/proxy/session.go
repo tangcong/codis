@@ -43,7 +43,7 @@ type Session struct {
 
 	broken atomic2.Bool
 	config *Config
-	tasks  chan *Request
+	reqs   chan *Request
 
 	authorized bool
 }
@@ -62,7 +62,7 @@ func (s *Session) String() string {
 	return string(b)
 }
 
-func NewSession(sock net.Conn, config *Config, tasks chan *Request) *Session {
+func NewSession(sock net.Conn, config *Config, reqs chan *Request) *Session {
 	c := redis.NewConn(sock,
 		config.SessionRecvBufsize.Int(),
 		config.SessionSendBufsize.Int(),
@@ -74,7 +74,7 @@ func NewSession(sock net.Conn, config *Config, tasks chan *Request) *Session {
 	s := &Session{
 		Conn: c, config: config,
 		CreateUnix: time.Now().Unix(),
-		tasks:      tasks,
+		reqs:       reqs,
 	}
 
 	s.stats.opmap = make(map[string]*opStats, 16)
@@ -270,8 +270,12 @@ func (s *Session) handleRequest(r *Request, d *Router) error {
 		s.authorized = true
 	}
 
-	if flag == FlagWrite && len(s.tasks) < 10240 {
-		s.tasks <- r
+	if flag == FlagWrite {
+		if len(s.reqs) >= 10240 {
+			log.Warnf("loss messgage!")
+		} else {
+			s.reqs <- r
+		}
 	}
 
 	switch opstr {

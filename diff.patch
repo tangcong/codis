@@ -1,0 +1,247 @@
+diff --git a/cmd/admin/admin.go b/cmd/admin/admin.go
+index 6106236..f070374 100644
+--- a/cmd/admin/admin.go
++++ b/cmd/admin/admin.go
+@@ -8,6 +8,7 @@ import (
+ 	"fmt"
+ 	"io/ioutil"
+ 	"path/filepath"
++	"strings"
+ 	"time"
+ 
+ 	"github.com/CodisLabs/codis/pkg/models"
+@@ -33,6 +34,8 @@ func (t *cmdAdmin) Main(d map[string]interface{}) {
+ 		t.handleConfigRestore(d)
+ 	case d["--dashboard-list"].(bool):
+ 		t.handleDashboardList(d)
++	case d["--add-product"] != nil:
++		t.handleAddProduct(d)
+ 	}
+ }
+ 
+@@ -427,3 +430,22 @@ func (t *cmdAdmin) handleDashboardList(d map[string]interface{}) {
+ 		fmt.Println(string(b))
+ 	}
+ }
++
++func (t *cmdAdmin) handleAddProduct(d map[string]interface{}) {
++	log.Warnf("add product start!")
++	client := t.newTopomClient(d)
++	defer client.Close()
++
++	cluster := models.ClusterConfig{}
++	cluster.ProductName = d["--product"].(string)
++	cluster.ProductAuth = d["--product-auth"].(string)
++	cluster.DashboardAddr = d["--product-dashboard"].(string)
++	cluster.ProxyList = strings.Split(d["--product-proxy"].(string), ";")
++
++	value, err := json.MarshalIndent(&cluster, "", " ")
++	err = client.Create(models.DashboardPath("__config__", cluster.DashboardAddr), value)
++	if err != nil {
++		log.PanicErrorf(err, "add products failed")
++	}
++	log.Warnf("add product end!")
++}
+diff --git a/cmd/admin/main.go b/cmd/admin/main.go
+index 692c996..575c2f1 100644
+--- a/cmd/admin/main.go
++++ b/cmd/admin/main.go
+@@ -56,6 +56,7 @@ Usage:
+ 	codis-admin [-v] --config-convert=FILE
+ 	codis-admin [-v] --config-restore=FILE       --product=NAME (--zookeeper=ADDR|--etcd=ADDR|--filesystem=ROOT) [--confirm]
+ 	codis-admin [-v] --dashboard-list                           (--zookeeper=ADDR|--etcd=ADDR|--filesystem=ROOT)
++	codis-admin [-v] --add-product  --product=NAME --product-dashboard=ADDR --product-proxy=addr --product-auth=pwd (--zookeeper=ADDR|--etcd=ADDR|--filesystem=ROOT)
+ 
+ Options:
+ 	-a AUTH, --auth=AUTH
+diff --git a/cmd/dashboard/main.go b/cmd/dashboard/main.go
+index 2629988..a7d1df3 100644
+--- a/cmd/dashboard/main.go
++++ b/cmd/dashboard/main.go
+@@ -94,6 +94,22 @@ Options:
+ 	}
+ 	defer client.Close()
+ 
++	if config.ProductFrom == "coordinator" {
++		localIp, err := utils.LookupItfAddr(config.BindItf)
++		if err != nil {
++			log.PanicErrorf(err, "lookup itf addr failed")
++		}
++		config.AdminAddr = localIp + ":" + config.AdminPort
++		store := models.NewStore(client, "__config__")
++		cluster, err := store.LoadDashboardProduct(config.AdminAddr, true)
++		if err != nil {
++			log.PanicErrorf(err, "load dashboard product failed")
++		}
++		log.Warnf("read product from coordinator,local ip is %s,cluster config is %s\n", localIp, cluster)
++		config.ProductName = cluster.ProductName
++		config.ProductAuth = cluster.ProductAuth
++	}
++
+ 	s, err := topom.New(client, config)
+ 	if err != nil {
+ 		log.PanicErrorf(err, "create topom with config file failed\n%s", config)
+diff --git a/config/dashboard.toml b/config/dashboard.toml
+index fb5e2b3..6d17d09 100644
+--- a/config/dashboard.toml
++++ b/config/dashboard.toml
+@@ -12,9 +12,13 @@ coordinator_addr = "127.0.0.1:2181"
+ # Set Codis Product Name/Auth.
+ product_name = "codis-demo"
+ product_auth = ""
++product_from = "coordinator"
++
++bind_itf = "eth0"
+ 
+ # Set bind address for admin(rpc), tcp only.
+ admin_addr = "0.0.0.0:18080"
++admin_port = "18080"
+ 
+ # Set arguments for data migration (only accept 'sync' & 'semi-async').
+ migration_method = "semi-async"
+diff --git a/pkg/models/store.go b/pkg/models/store.go
+index bfb5f7f..710fd52 100644
+--- a/pkg/models/store.go
++++ b/pkg/models/store.go
+@@ -58,6 +58,10 @@ func SentinelPath(product string) string {
+ 	return filepath.Join(CodisDir, product, "sentinel")
+ }
+ 
++func DashboardPath(product string, addr string) string {
++	return filepath.Join(CodisDir, product, "dashboard", addr)
++}
++
+ func LoadTopom(client Client, product string, must bool) (*Topom, error) {
+ 	b, err := client.Read(LockPath(product), must)
+ 	if err != nil || b == nil {
+@@ -95,6 +99,10 @@ func (s *Store) SlotPath(sid int) string {
+ 	return SlotPath(s.product, sid)
+ }
+ 
++func (s *Store) DashboardProductPath(addr string) string {
++	return DashboardPath(s.product, addr)
++}
++
+ func (s *Store) GroupDir() string {
+ 	return GroupDir(s.product)
+ }
+@@ -255,6 +263,18 @@ func (s *Store) UpdateSentinel(p *Sentinel) error {
+ 	return s.client.Update(s.SentinelPath(), p.Encode())
+ }
+ 
++func (s *Store) LoadDashboardProduct(addr string, must bool) (*ClusterConfig, error) {
++	b, err := s.client.Read(s.DashboardProductPath(addr), must)
++	if err != nil || b == nil {
++		return nil, err
++	}
++	p := &ClusterConfig{}
++	if err := jsonDecode(p, b); err != nil {
++		return nil, err
++	}
++	return p, nil
++}
++
+ func ValidateProduct(name string) error {
+ 	if regexp.MustCompile(`^\w[\w\.\-]*$`).MatchString(name) {
+ 		return nil
+diff --git a/pkg/topom/config.go b/pkg/topom/config.go
+index 51823e0..13311c6 100644
+--- a/pkg/topom/config.go
++++ b/pkg/topom/config.go
+@@ -29,9 +29,13 @@ coordinator_addr = "127.0.0.1:2181"
+ # Set Codis Product Name/Auth.
+ product_name = "codis-demo"
+ product_auth = ""
++product_from = "coordinator"
++
++bind_itf = "eth0"
+ 
+ # Set bind address for admin(rpc), tcp only.
+ admin_addr = "0.0.0.0:18080"
++admin_port = "18080"
+ 
+ # Set arguments for data migration (only accept 'sync' & 'semi-async').
+ migration_method = "semi-async"
+@@ -53,12 +57,15 @@ type Config struct {
+ 	CoordinatorName string `toml:"coordinator_name" json:"coordinator_name"`
+ 	CoordinatorAddr string `toml:"coordinator_addr" json:"coordinator_addr"`
+ 
++	BindItf   string `toml:"bind_itf" json:"bind_itf"`
+ 	AdminAddr string `toml:"admin_addr" json:"admin_addr"`
++	AdminPort string `toml:"admin_port" json:"admin_port"`
+ 
+ 	HostAdmin string `toml:"-" json:"-"`
+ 
+ 	ProductName string `toml:"product_name" json:"product_name"`
+ 	ProductAuth string `toml:"product_auth" json:"-"`
++	ProductFrom string `toml:"product_from" json:"-"`
+ 
+ 	MigrationMethod        string            `toml:"migration_method" json:"migration_method"`
+ 	MigrationAsyncMaxBulks int               `toml:"migration_async_maxbulks" json:"migration_async_maxbulks"`
+diff --git a/pkg/topom/topom.go b/pkg/topom/topom.go
+index 07fc44c..9f1cd0a 100644
+--- a/pkg/topom/topom.go
++++ b/pkg/topom/topom.go
+@@ -124,6 +124,7 @@ func New(client models.Client, config *Config) (*Topom, error) {
+ }
+ 
+ func (s *Topom) setup(config *Config) error {
++	log.Warnf("config admin addr is %v\n", config.AdminAddr)
+ 	if l, err := net.Listen("tcp", config.AdminAddr); err != nil {
+ 		return errors.Trace(err)
+ 	} else {
+diff --git a/pkg/utils/resolver.go b/pkg/utils/resolver.go
+index 235417d..1d3bce1 100644
+--- a/pkg/utils/resolver.go
++++ b/pkg/utils/resolver.go
+@@ -7,13 +7,34 @@ import (
+ 	"net"
+ 	"os"
+ 	"strconv"
++	"strings"
+ 	"time"
+ 
+ 	"golang.org/x/net/context"
+ 
+ 	"github.com/CodisLabs/codis/pkg/utils/errors"
++	"github.com/CodisLabs/codis/pkg/utils/log"
+ )
+ 
++var ErrLookupItfAddr = errors.New("Lookup Interface Addr Failed")
++
++func LookupItfAddr(name string) (string, error) {
++	ift, err := net.InterfaceByName(name)
++	if err != nil {
++		log.Warnf("get interface addr by name fail,%v\n", ift)
++	} else {
++		addr, err := ift.Addrs()
++		if err != nil || len(addr) < 2 {
++			log.Warnf("get %s addr fail,%s\n", name, err)
++		} else {
++			localIp := (strings.Split(addr[0].String(), "/"))[0]
++			log.Warnf("interface name:%s,addr is:%s\n", name, localIp)
++			return localIp, nil
++		}
++	}
++	return "", ErrLookupItfAddr
++}
++
+ func LookupIP(host string) []net.IP {
+ 	ipAddrs, _ := net.LookupIP(host)
+ 	return ipAddrs
+@@ -85,6 +106,7 @@ func init() {
+ }
+ 
+ func ReplaceUnspecifiedIP(network string, listenAddr, globalAddr string) (string, error) {
++	log.Warnf("network is %s,listen addr is %s,global addr is %s\n", network, listenAddr, globalAddr)
+ 	if globalAddr == "" {
+ 		return replaceUnspecifiedIP(network, listenAddr, true)
+ 	} else {
+@@ -100,6 +122,7 @@ func replaceUnspecifiedIP(network string, address string, replace bool) (string,
+ 		return address, nil
+ 	case "tcp", "tcp4", "tcp6":
+ 		tcpAddr, err := net.ResolveTCPAddr(network, address)
++		log.Warnf("tcp addr is %v\n", tcpAddr)
+ 		if err != nil {
+ 			return "", errors.Trace(err)
+ 		}

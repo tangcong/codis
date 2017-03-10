@@ -5,22 +5,21 @@ package backup
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"net"
 	"sync"
 	"time"
 
-	"github.com/CodisLabs/codis/pkg/proxy"
-	"github.com/CodisLabs/codis/pkg/proxy/redis"
+	"fmt"
 	"github.com/CodisLabs/codis/pkg/utils/errors"
 	"github.com/CodisLabs/codis/pkg/utils/log"
-	"github.com/CodisLabs/codis/pkg/utils/math2"
+	//"github.com/CodisLabs/codis/pkg/utils/math2"
 	"github.com/CodisLabs/codis/pkg/utils/sync2/atomic2"
+	"github.com/golang/protobuf/proto"
 )
 
 type Session struct {
-	Conn *redis.Conn
+	Conn *Conn
 	Ops  int64
 
 	CreateUnix int64
@@ -55,7 +54,8 @@ func (s *Session) String() string {
 }
 
 func NewSession(sock net.Conn, config *Config, writer io.WriteCloser) *Session {
-	c := redis.NewConn(sock,
+	log.Warnf("recv buf size:%d,send buf size:%d\n", config.SessionRecvBufsize.Int(), config.SessionSendBufsize.Int())
+	c := NewConn(sock,
 		config.SessionRecvBufsize.Int(),
 		config.SessionSendBufsize.Int(),
 	)
@@ -102,72 +102,59 @@ var (
 	ErrTooManyPipelinedRequests = errors.New("too many pipelined requests")
 )
 
-var RespOK = redis.NewString([]byte("OK"))
-
 func (s *Session) Start() {
 	s.start.Do(func() {
 
-		tasks := make(chan *proxy.Request, math2.MaxInt(1, s.config.SessionMaxPipeline))
+		//reqs := make(chan *WriteRequest, math2.MaxInt(1, s.config.SessionMaxPipeline))
 
 		go func() {
-			s.loopReader(tasks)
-			close(tasks)
+			//s.loopReader(reqs)
+			s.loopReader()
+			//close(reqs)
 		}()
 	})
 }
 
-func (s *Session) loopReader(tasks chan<- *proxy.Request) (err error) {
+//func (s *Session) loopReader(reqs chan<- *WriteRequest) (err error) {
+func (s *Session) loopReader() (err error) {
 	defer func() {
 		s.CloseReaderWithError(err)
 	}()
 
 	for !s.quit {
-		multi, err := s.Conn.DecodeMultiBulk()
+		r, err := s.Conn.DecodeReq()
 		if err != nil {
+			log.Warnf("decode req failed,%s", err)
 			return err
 		}
-
-		start := time.Now()
-		s.LastOpUnix = start.Unix()
-		s.Ops++
-
-		r := &proxy.Request{}
-		r.Multi = multi
-		r.Start = start.UnixNano()
-		r.Batch = &sync.WaitGroup{}
-		r.Database = s.database
-
-		if len(tasks) == cap(tasks) {
-			return ErrTooManyPipelinedRequests
+		log.Warnf("recv msg,product name is %s\n", *r.ProductName)
+		fmt.Fprintf(s.writer, "%d\t%s\t%d\n", time.Now().Unix(), *r.ProductName, len(r.MultiCmd))
+		for _, cmd := range r.MultiCmd {
+			fmt.Fprintf(s.writer, "%s\n", cmd)
 		}
-
-		fmt.Fprintf(s.writer, "%d\t%d\n", time.Now().Unix(), len(r.Multi))
-		for _, argv := range r.Multi {
-			fmt.Fprintf(s.writer, "%s\n", argv.Value)
-		}
-
 		s.handleResponse(r)
 	}
 	return nil
 }
 
-func (s *Session) handleQuit(r *proxy.Request) error {
+func (s *Session) handleQuit(r *WriteRequest) error {
 	s.quit = true
-	r.Resp = RespOK
 	return nil
 }
 
-func (s *Session) handleResponse(r *proxy.Request) error {
-	r.Resp = RespOK
+func (s *Session) handleResponse(r *WriteRequest) error {
+	rsp := &WriteResponse{}
+	rsp.Cmds = proto.Int32(int32(len(r.MultiCmd)))
+	rsp.Status = WriteResponse_WritingStatus(WriteResponse_OK).Enum()
 	p := s.Conn.FlushEncoder()
 	p.MaxInterval = time.Millisecond
 	p.MaxBuffered = 256
 
-	if err := p.Encode(r.Resp); err != nil {
-		log.Warnf("encode failed:%v", r.Resp)
+	if err := p.EncodeRes(rsp); err != nil {
+		log.Warnf("encode failed:%v", rsp)
 	}
 	if err := p.Flush(true); err != nil {
-		log.Warnf("flush failed:%v", r.Resp)
+		log.Warnf("flush failed:%v", rsp)
 	}
 	return nil
 }
