@@ -106,7 +106,6 @@ func init() {
 }
 
 func ReplaceUnspecifiedIP(network string, listenAddr, globalAddr string) (string, error) {
-	log.Warnf("network is %s,listen addr is %s,global addr is %s\n", network, listenAddr, globalAddr)
 	if globalAddr == "" {
 		return replaceUnspecifiedIP(network, listenAddr, true)
 	} else {
@@ -122,7 +121,6 @@ func replaceUnspecifiedIP(network string, address string, replace bool) (string,
 		return address, nil
 	case "tcp", "tcp4", "tcp6":
 		tcpAddr, err := net.ResolveTCPAddr(network, address)
-		log.Warnf("tcp addr is %v\n", tcpAddr)
 		if err != nil {
 			return "", errors.Trace(err)
 		}

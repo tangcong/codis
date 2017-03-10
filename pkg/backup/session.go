@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"github.com/CodisLabs/codis/pkg/utils/errors"
 	"github.com/CodisLabs/codis/pkg/utils/log"
-	//"github.com/CodisLabs/codis/pkg/utils/math2"
 	"github.com/CodisLabs/codis/pkg/utils/sync2/atomic2"
 	"github.com/golang/protobuf/proto"
 )
@@ -54,7 +53,6 @@ func (s *Session) String() string {
 }
 
 func NewSession(sock net.Conn, config *Config, writer io.WriteCloser) *Session {
-	log.Warnf("recv buf size:%d,send buf size:%d\n", config.SessionRecvBufsize.Int(), config.SessionSendBufsize.Int())
 	c := NewConn(sock,
 		config.SessionRecvBufsize.Int(),
 		config.SessionSendBufsize.Int(),
@@ -97,25 +95,17 @@ func (s *Session) CloseWithError(err error) error {
 
 var (
 	ErrTooManySessions = errors.New("too many sessions")
-	ErrRouterNotOnline = errors.New("router is not online")
-
-	ErrTooManyPipelinedRequests = errors.New("too many pipelined requests")
 )
 
 func (s *Session) Start() {
 	s.start.Do(func() {
 
-		//reqs := make(chan *WriteRequest, math2.MaxInt(1, s.config.SessionMaxPipeline))
-
 		go func() {
-			//s.loopReader(reqs)
 			s.loopReader()
-			//close(reqs)
 		}()
 	})
 }
 
-//func (s *Session) loopReader(reqs chan<- *WriteRequest) (err error) {
 func (s *Session) loopReader() (err error) {
 	defer func() {
 		s.CloseReaderWithError(err)
@@ -127,7 +117,6 @@ func (s *Session) loopReader() (err error) {
 			log.Warnf("decode req failed,%s", err)
 			return err
 		}
-		log.Warnf("recv msg,product name is %s\n", *r.ProductName)
 		fmt.Fprintf(s.writer, "%d\t%s\t%d\n", time.Now().Unix(), *r.ProductName, len(r.MultiCmd))
 		for _, cmd := range r.MultiCmd {
 			fmt.Fprintf(s.writer, "%s\n", cmd)

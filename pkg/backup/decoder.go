@@ -9,7 +9,6 @@ import (
 
 	"github.com/CodisLabs/codis/pkg/utils/bufio2"
 	"github.com/CodisLabs/codis/pkg/utils/errors"
-	"github.com/CodisLabs/codis/pkg/utils/log"
 	"github.com/golang/protobuf/proto"
 )
 
@@ -68,7 +67,6 @@ func (d *Decoder) decodeReq() (*WriteRequest, error) {
 	if length <= HeaderSize {
 		return nil, ErrBadRes
 	}
-	log.Warnf("recv packet length: %d\n", length)
 	b, err = d.br.ReadFull(int(length) - HeaderSize)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -87,7 +85,6 @@ func (d *Decoder) decodeRes() (*WriteResponse, error) {
 	if length <= HeaderSize {
 		return nil, ErrBadRes
 	}
-	log.Warnf("recv packet length: %d\n", length)
 	b, err = d.br.ReadFull(int(length) - HeaderSize)
 	if err != nil {
 		return nil, errors.Trace(err)

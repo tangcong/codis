@@ -7,7 +7,6 @@ import (
 	"encoding/binary"
 	"github.com/CodisLabs/codis/pkg/utils/bufio2"
 	"github.com/CodisLabs/codis/pkg/utils/errors"
-	"github.com/CodisLabs/codis/pkg/utils/log"
 	"github.com/golang/protobuf/proto"
 	"io"
 )
@@ -78,7 +77,6 @@ func (e *Encoder) encodeReq(r *WriteRequest) error {
 	)
 	b, err = proto.Marshal(r)
 	length = HeaderSize + uint(len(b))
-	log.Warnf("send packet length:%d\n", length)
 	var buf = make([]byte, length)
 	binary.BigEndian.PutUint32(buf[0:], uint32(length))
 	copy(buf[HeaderSize:], b)
@@ -98,7 +96,6 @@ func (e *Encoder) encodeRes(r *WriteResponse) error {
 	length = HeaderSize + uint(len(b))
 	var buf = make([]byte, length)
 	binary.BigEndian.PutUint32(buf[0:], uint32(length))
-	log.Warnf("send packet length:%d\n", length)
 	copy(buf[HeaderSize:], b)
 	if _, err := e.bw.Write(buf); err != nil {
 		return errors.Trace(err)

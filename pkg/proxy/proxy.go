@@ -212,6 +212,7 @@ func (s *Proxy) Close() error {
 	}
 
 	close(s.cmds)
+	close(s.rsps)
 
 	return nil
 }
@@ -646,7 +647,6 @@ func (s *Proxy) Stats(flags StatsFlags) *Stats {
 }
 
 func (s *Proxy) makeBackupConn() (*backup.Conn, error) {
-	log.Warnf("make backup conn,recv buf size:%d,send buf size:%d\n", s.config.BackendRecvBufsize.Int(), s.config.BackendSendBufsize.Int())
 	c, err := backup.DialTimeout(s.config.BackupAddr, time.Second*5,
 		s.config.BackendRecvBufsize.Int(),
 		s.config.BackendSendBufsize.Int())
