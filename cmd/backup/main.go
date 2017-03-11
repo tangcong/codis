@@ -69,6 +69,12 @@ Options:
 
 	}
 
+	localIp, err := utils.LookupItfAddr(config.BindItf)
+	if err != nil {
+		log.PanicErrorf(err, "lookup itf addr failed")
+	}
+	config.BackupAddr = localIp + ":" + strconv.Itoa(config.BackupPort)
+
 	s, err := backup.New(config)
 	if err != nil {
 		log.PanicErrorf(err, "create proxy with config failed\n%s", config)

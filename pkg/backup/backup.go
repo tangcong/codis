@@ -4,7 +4,6 @@
 package backup
 
 import (
-	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -35,7 +34,6 @@ type Backup struct {
 
 	lbackup net.Listener
 	ladmin  net.Listener
-	writer  io.WriteCloser
 }
 
 var ErrClosedBackup = errors.New("use of closed backup")
@@ -62,14 +60,6 @@ func New(config *Config) (*Backup, error) {
 		s.model.Sys = strings.TrimSpace(string(b))
 	}
 	s.model.Hostname = utils.Hostname
-
-	if writer, err := log.NewRollingFile(config.DataPath, log.HourlyRolling); err != nil {
-
-		log.Panicf("backup open roll file failed:%s", config.DataPath)
-	} else {
-
-		s.writer = writer
-	}
 
 	if err := s.setup(config); err != nil {
 		s.Close()
@@ -133,8 +123,6 @@ func (s *Backup) Close() error {
 		s.lbackup.Close()
 	}
 
-	s.writer.Close()
-
 	return nil
 }
 
@@ -176,7 +164,7 @@ func (s *Backup) serveBackup() {
 			if err != nil {
 				return err
 			}
-			NewSession(c, s.config, s.writer).Start()
+			NewSession(c, s.config).Start()
 		}
 	}(s.lbackup)
 

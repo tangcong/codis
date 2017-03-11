@@ -26,6 +26,7 @@ codis-fe: codis-deps
 
 codis-backup: codis-deps
 	go build -i -o bin/codis-backup ./cmd/backup
+	@./bin/codis-backup --default-config > config/backup.toml
 
 codis-server:
 	@mkdir -p bin

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"fmt"
+	"github.com/CodisLabs/codis/pkg/utils"
 	"github.com/CodisLabs/codis/pkg/utils/errors"
 	"github.com/CodisLabs/codis/pkg/utils/log"
 	"github.com/CodisLabs/codis/pkg/utils/sync2/atomic2"
@@ -34,7 +35,7 @@ type Session struct {
 	broken atomic2.Bool
 	config *Config
 
-	writer     io.WriteCloser
+	mwriter    map[string]io.WriteCloser
 	authorized bool
 }
 
@@ -52,7 +53,7 @@ func (s *Session) String() string {
 	return string(b)
 }
 
-func NewSession(sock net.Conn, config *Config, writer io.WriteCloser) *Session {
+func NewSession(sock net.Conn, config *Config) *Session {
 	c := NewConn(sock,
 		config.SessionRecvBufsize.Int(),
 		config.SessionSendBufsize.Int(),
@@ -64,8 +65,8 @@ func NewSession(sock net.Conn, config *Config, writer io.WriteCloser) *Session {
 	s := &Session{
 		Conn: c, config: config,
 		CreateUnix: time.Now().Unix(),
-		writer:     writer,
 	}
+	s.mwriter = make(map[string]io.WriteCloser)
 	log.Infof("session [%p] create: %s", s, s)
 	return s
 }
@@ -117,9 +118,27 @@ func (s *Session) loopReader() (err error) {
 			log.Warnf("decode req failed,%s", err)
 			return err
 		}
-		fmt.Fprintf(s.writer, "%d\t%s\t%d\n", time.Now().Unix(), *r.ProductName, len(r.MultiCmd))
+		writer, ok := s.mwriter[*r.ProductName]
+		if !ok {
+			ok, err = utils.IsDirExist(s.config.DataDir)
+			if err != nil {
+				log.Panicf("backup check dir exist failed:%s", err)
+			} else if !ok {
+				err = utils.MkDir(s.config.DataDir)
+				if err != nil {
+					log.Panicf("backup mk dir failed:%s", err)
+				}
+			}
+			file := s.config.DataDir + "/" + *r.ProductName
+			if writer, err = log.NewRollingFile(file, log.HourlyRolling); err != nil {
+				log.Panicf("backup open roll file failed:%s", file)
+			} else {
+				s.mwriter[*r.ProductName] = writer
+			}
+		}
+		fmt.Fprintf(writer, "%d\t%d\n", time.Now().Unix(), len(r.MultiCmd))
 		for _, cmd := range r.MultiCmd {
-			fmt.Fprintf(s.writer, "%s\n", cmd)
+			fmt.Fprintf(writer, "%s\n", cmd)
 		}
 		s.handleResponse(r)
 	}
