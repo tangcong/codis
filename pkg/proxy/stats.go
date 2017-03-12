@@ -53,6 +53,8 @@ var cmdstats struct {
 	opmap map[string]*opStats
 	total atomic2.Int64
 	fails atomic2.Int64
+	wsucc atomic2.Int64
+	wfail atomic2.Int64
 	redis struct {
 		errors atomic2.Int64
 	}
@@ -80,6 +82,14 @@ func OpTotal() int64 {
 
 func OpFails() int64 {
 	return cmdstats.fails.Get()
+}
+
+func OpWriteSucc() int64 {
+	return cmdstats.wsucc.Get()
+}
+
+func OpWriteFail() int64 {
+	return cmdstats.wfail.Get()
 }
 
 func OpRedisErrors() int64 {
@@ -141,12 +151,22 @@ func ResetStats() {
 
 	cmdstats.total.Set(0)
 	cmdstats.fails.Set(0)
+	cmdstats.wsucc.Set(0)
+	cmdstats.wfail.Set(0)
 	cmdstats.redis.errors.Set(0)
 	sessions.total.Set(sessions.alive.Get())
 }
 
 func incrOpTotal(n int64) {
 	cmdstats.total.Add(n)
+}
+
+func incrOpWriteSucc(n int64) {
+	cmdstats.wsucc.Add(n)
+}
+
+func incrOpWriteFail(n int64) {
+	cmdstats.wfail.Add(n)
 }
 
 func incrOpStats(e *opStats) {

@@ -137,9 +137,11 @@ func (s *Session) loopReader() (err error) {
 			}
 		}
 		fmt.Fprintf(writer, "%d\t%d\n", time.Now().Unix(), len(r.MultiCmd))
+		var buf string
 		for _, cmd := range r.MultiCmd {
-			fmt.Fprintf(writer, "%s\n", cmd)
+			buf += cmd
 		}
+		fmt.Fprintf(writer, "%s\n", buf)
 		s.handleResponse(r)
 	}
 	return nil

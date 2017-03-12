@@ -219,6 +219,18 @@ func (s *Session) loopWriter(tasks <-chan *Request) (err error) {
 			return s.incrOpFails(r, err)
 		} else {
 			s.incrOpStats(r, resp.Type)
+			_, flag, err := getOpInfo(r.Multi)
+			if err != nil {
+				return err
+			}
+			if flag == FlagWrite {
+				if len(s.reqs) >= 10240 {
+					s.incrWriteOpFails(r, err)
+				} else {
+					s.reqs <- r
+					s.incrWriteOpStats(r, resp.Type)
+				}
+			}
 		}
 		if len(tasks) == 0 {
 			s.flushOpStats(false)
@@ -268,14 +280,6 @@ func (s *Session) handleRequest(r *Request, d *Router) error {
 			return nil
 		}
 		s.authorized = true
-	}
-
-	if flag == FlagWrite {
-		if len(s.reqs) >= 10240 {
-			log.Warnf("loss messgage!")
-		} else {
-			s.reqs <- r
-		}
 	}
 
 	switch opstr {
@@ -654,6 +658,22 @@ func (s *Session) incrOpStats(r *Request, t redis.RespType) {
 
 func (s *Session) incrOpFails(r *Request, err error) error {
 	e := s.getOpStats(r.OpStr)
+	e.fails.Incr()
+	return err
+}
+
+func (s *Session) incrWriteOpStats(r *Request, t redis.RespType) {
+	e := s.getOpStats("WriteCmd")
+	e.calls.Incr()
+	e.nsecs.Add(time.Now().UnixNano() - r.Start)
+	switch t {
+	case redis.TypeError:
+		e.redis.errors.Incr()
+	}
+}
+
+func (s *Session) incrWriteOpFails(r *Request, err error) error {
+	e := s.getOpStats("WriteCmd")
 	e.fails.Incr()
 	return err
 }

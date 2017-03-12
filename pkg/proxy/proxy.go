@@ -53,8 +53,6 @@ type Proxy struct {
 	req     *backup.WriteRequest
 	encoder *backup.FlushEncoder
 	conn    *backup.Conn
-	rcmd    uint64
-	scmd    uint64
 
 	ha struct {
 		monitor *redis.Sentinel
@@ -497,9 +495,11 @@ type Stats struct {
 	} `json:"sentinels"`
 
 	Ops struct {
-		Total int64 `json:"total"`
-		Fails int64 `json:"fails"`
-		Redis struct {
+		Total     int64 `json:"total"`
+		Fails     int64 `json:"fails"`
+		WriteSucc int64 `json:"writesucc"`
+		WriteFail int64 `json:"writefail"`
+		Redis     struct {
 			Errors int64 `json:"errors"`
 		} `json:"redis"`
 		QPS int64      `json:"qps"`
@@ -601,6 +601,8 @@ func (s *Proxy) Stats(flags StatsFlags) *Stats {
 
 	stats.Ops.Total = OpTotal()
 	stats.Ops.Fails = OpFails()
+	stats.Ops.WriteSucc = OpWriteSucc()
+	stats.Ops.WriteFail = OpWriteFail()
 	stats.Ops.Redis.Errors = OpRedisErrors()
 	stats.Ops.QPS = OpQPS()
 
@@ -659,6 +661,9 @@ func (s *Proxy) makeBackupConn() (*backup.Conn, error) {
 	return c, nil
 }
 
+var ErrSendCmdFail = errors.New("Send Cmd Fail!")
+var ErrCmdBlock = errors.New("Cmd Block,Send Fail!")
+
 func (s *Proxy) backupLoopWriter() {
 	tick := time.Tick(500 * time.Millisecond)
 	for {
@@ -679,13 +684,15 @@ func (s *Proxy) backupLoopWriter() {
 				log.Warnf("send cmd failed,may lost messages!")
 			}
 		default:
-			log.Warnf("sleep!")
 			time.Sleep(100 * time.Millisecond)
 		}
 	}
 }
 
 func (s *Proxy) pushCmd(cmd *Request) error {
+	if n := len(s.req.MultiCmd); n >= 256 {
+		return ErrCmdBlock
+	}
 	s.req.ProductName = &s.config.ProductName
 	var buf string
 	for i, argv := range cmd.Multi {
@@ -702,10 +709,8 @@ func (s *Proxy) pushCmd(cmd *Request) error {
 	return nil
 }
 
-var ErrSendCmdFail = errors.New("Send Cmd Fail!")
-
 func (s *Proxy) sendCmds() error {
-	if len(s.req.MultiCmd) == 0 {
+	if n := len(s.req.MultiCmd); n == 0 {
 		return nil
 	}
 	err := ErrSendCmdFail
@@ -741,8 +746,8 @@ func (s *Proxy) sendCmds() error {
 	}
 	if err == nil && len(s.rsps) < 10240 {
 		s.rsps <- s.req
+		s.req = &backup.WriteRequest{}
 	}
-	s.req = &backup.WriteRequest{}
 	return err
 }
 
@@ -751,11 +756,12 @@ func (s *Proxy) backupLoopReader(c *backup.Conn) {
 	for r := range s.rsps {
 		if c != nil {
 			if resp, err := c.DecodeRes(); err != nil {
+				incrOpWriteFail(int64(len(r.MultiCmd)))
 				log.WarnErrorf(err, "product = %s, commands = %d,status = %d,decode failure, %s\n", r.GetProductName(), len(r.MultiCmd), err)
 				return
 			} else {
 				//log.Warnf("product = %s, command num = %d,status = %d\n", r.Req.GetProductName(), resp.Res.GetCmds(), resp.Res.GetStatus())
-				s.scmd += uint64(resp.GetCmds())
+				incrOpWriteSucc(int64(resp.GetCmds()))
 			}
 		}
 	}
