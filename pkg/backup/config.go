@@ -22,7 +22,7 @@ const DefaultConfig = `
 ##################################################
 
 # Set bind address for admin(rpc), tcp only.
-admin_addr = "0.0.0.0:11080"
+admin_addr = "0.0.0.0:11081"
 
 # Set bind ethernet interface
 bind_itf = "eth0"
@@ -33,6 +33,7 @@ backup_addr = "0.0.0.0:20000"
 
 # Set backup server port
 backup_port = 20000
+admin_port = 11081 
 
 # Set data file dir 
 data_dir = "/data/redis"
@@ -84,6 +85,7 @@ type Config struct {
 
 	BindItf               string         `toml:"bind_itf" json:"bind_itf"`
 	BackupPort            int            `toml:"backup_port" json:"backup_port"`
+	AdminPort             int            `toml:"admin_port" json:"admin_port"`
 	DataDir               string         `toml:"data_dir" json:"data_dir"`
 	BackupMaxClients      int            `toml:"backup_max_clients" json:"backup_max_clients"`
 	BackupMaxOffheapBytes bytesize.Int64 `toml:"backup_max_offheap_size" json:"backup_max_offheap_size"`

@@ -5,6 +5,7 @@ package backup
 
 import (
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"strings"
@@ -70,10 +71,34 @@ func New(config *Config) (*Backup, error) {
 
 	unsafe2.SetMaxOffheapBytes(config.BackupMaxOffheapBytes.Int())
 
-	//go s.serveAdmin()
+	go s.serveAdmin()
 	go s.serveBackup()
 
 	return s, nil
+}
+
+func (s *Backup) serveAdmin() {
+	if s.IsClosed() {
+		return
+	}
+	defer s.Close()
+
+	log.Warnf("[%p] admin start service on %s", s, s.ladmin.Addr())
+
+	eh := make(chan error, 1)
+	go func(l net.Listener) {
+		h := http.NewServeMux()
+		h.Handle("/", newApiServer(s))
+		hs := &http.Server{Handler: h}
+		eh <- hs.Serve(l)
+	}(s.ladmin)
+
+	select {
+	case <-s.exit.C:
+		log.Warnf("[%p] admin shutdown", s)
+	case err := <-eh:
+		log.ErrorErrorf(err, "[%p] admin exit on error", s)
+	}
 }
 
 func (s *Backup) setup(config *Config) error {
@@ -91,6 +116,18 @@ func (s *Backup) setup(config *Config) error {
 		s.model.BackupAddr = x
 	}
 
+	proto = "tcp"
+	if l, err := net.Listen(proto, config.AdminAddr); err != nil {
+		return errors.Trace(err)
+	} else {
+		s.ladmin = l
+
+		x, err := utils.ReplaceUnspecifiedIP(proto, l.Addr().String(), config.HostBackup)
+		if err != nil {
+			return err
+		}
+		s.model.AdminAddr = x
+	}
 	return nil
 }
 
@@ -192,4 +229,59 @@ func (s *Backup) acceptConn(l net.Listener) (net.Conn, error) {
 		}
 		return c, err
 	}
+}
+
+type Stats struct {
+	Online bool `json:"online"`
+	Closed bool `json:"closed"`
+
+	Ops struct {
+		WriteSucc int64 `json:"writesucc"`
+		WriteFail int64 `json:"writefail"`
+	} `json:"ops"`
+
+	Sessions struct {
+		Total int64 `json:"total"`
+		Alive int64 `json:"alive"`
+	} `json:"sessions"`
+
+	Rusage struct {
+		Now string       `json:"now"`
+		CPU float64      `json:"cpu"`
+		Mem int64        `json:"mem"`
+		Raw *utils.Usage `json:"raw,omitempty"`
+	} `json:"rusage"`
+}
+
+type Overview struct {
+	Version string         `json:"version"`
+	Compile string         `json:"compile"`
+	Config  *Config        `json:"config,omitempty"`
+	Model   *models.Backup `json:"model,omitempty"`
+	Stats   *Stats         `json:"stats,omitempty"`
+}
+
+func (s *Backup) Overview() *Overview {
+	o := &Overview{
+		Version: utils.Version,
+		Compile: utils.Compile,
+		Config:  s.Config(),
+		Model:   s.Model(),
+		Stats:   s.Stats(),
+	}
+	return o
+}
+
+func (s *Backup) Stats() *Stats {
+	stats := &Stats{}
+	stats.Online = s.IsOnline()
+	stats.Closed = s.IsClosed()
+
+	stats.Ops.WriteSucc = OpWriteSucc()
+	stats.Ops.WriteFail = OpWriteFail()
+
+	stats.Sessions.Total = SessionsTotal()
+	stats.Sessions.Alive = SessionsAlive()
+
+	return stats
 }

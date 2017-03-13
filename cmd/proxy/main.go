@@ -174,6 +174,7 @@ Options:
 		log.Warnf("read product from coordinator,local ip is %s,cluster config is %s\n", localIp, cluster)
 		config.ProductName = cluster.ProductName
 		config.ProductAuth = cluster.ProductAuth
+		config.BackupAddr = cluster.BackupAddr
 		dashboard = cluster.DashboardAddr
 	}
 

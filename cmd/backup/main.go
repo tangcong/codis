@@ -74,6 +74,7 @@ Options:
 		log.PanicErrorf(err, "lookup itf addr failed")
 	}
 	config.BackupAddr = localIp + ":" + strconv.Itoa(config.BackupPort)
+	config.AdminAddr = localIp + ":" + strconv.Itoa(config.AdminPort)
 
 	s, err := backup.New(config)
 	if err != nil {

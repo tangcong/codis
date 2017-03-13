@@ -653,6 +653,7 @@ func (s *Proxy) makeBackupConn() (*backup.Conn, error) {
 		s.config.BackendRecvBufsize.Int(),
 		s.config.BackendSendBufsize.Int())
 	if err != nil {
+		log.Warnf("proxy connect backup(%s) failed:%s\n", s.config.BackupAddr, err)
 		return nil, err
 	}
 	c.ReaderTimeout = s.config.BackendRecvTimeout.Get()
@@ -691,6 +692,7 @@ func (s *Proxy) backupLoopWriter() {
 
 func (s *Proxy) pushCmd(cmd *Request) error {
 	if n := len(s.req.MultiCmd); n >= 256 {
+		incrOpWriteFail(1)
 		return ErrCmdBlock
 	}
 	s.req.ProductName = &s.config.ProductName
@@ -747,6 +749,8 @@ func (s *Proxy) sendCmds() error {
 	if err == nil && len(s.rsps) < 10240 {
 		s.rsps <- s.req
 		s.req = &backup.WriteRequest{}
+	} else {
+		incrOpWriteFail(int64(len(s.req.MultiCmd)))
 	}
 	return err
 }

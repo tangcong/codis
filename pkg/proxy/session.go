@@ -219,16 +219,18 @@ func (s *Session) loopWriter(tasks <-chan *Request) (err error) {
 			return s.incrOpFails(r, err)
 		} else {
 			s.incrOpStats(r, resp.Type)
-			_, flag, err := getOpInfo(r.Multi)
-			if err != nil {
-				return err
-			}
-			if flag == FlagWrite {
-				if len(s.reqs) >= 10240 {
-					s.incrWriteOpFails(r, err)
-				} else {
-					s.reqs <- r
-					s.incrWriteOpStats(r, resp.Type)
+			if !resp.IsError() {
+				_, flag, err := getOpInfo(r.Multi)
+				if err != nil {
+					return err
+				}
+				if flag == FlagWrite {
+					if len(s.reqs) >= 10240 {
+						s.incrWriteOpFails(r, err)
+					} else {
+						s.reqs <- r
+						s.incrWriteOpStats(r, resp.Type)
+					}
 				}
 			}
 		}

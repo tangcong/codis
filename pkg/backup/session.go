@@ -116,6 +116,7 @@ func (s *Session) loopReader() (err error) {
 		r, err := s.Conn.DecodeReq()
 		if err != nil {
 			log.Warnf("decode req failed,%s", err)
+			incrOpWriteFail(1)
 			return err
 		}
 		writer, ok := s.mwriter[*r.ProductName]
@@ -143,6 +144,7 @@ func (s *Session) loopReader() (err error) {
 		}
 		fmt.Fprintf(writer, "%s\n", buf)
 		s.handleResponse(r)
+		incrOpWriteSucc(int64(len(r.MultiCmd)))
 	}
 	return nil
 }
