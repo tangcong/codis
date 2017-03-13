@@ -37,6 +37,10 @@ func (t *cmdAdmin) Main(d map[string]interface{}) {
 		t.handleAddProduct(d)
 	case d["--add-proxy"].(bool):
 		t.handleAddProxy(d)
+	case d["--del-product"].(bool):
+		t.handleDelProduct(d)
+	case d["--del-proxy"].(bool):
+		t.handleDelProxy(d)
 	}
 }
 
@@ -445,6 +449,7 @@ func (t *cmdAdmin) handleAddProduct(d map[string]interface{}) {
 	cluster.ProductName = utils.ArgumentMust(d, "--product")
 	cluster.ProductAuth = utils.ArgumentMust(d, "--product-auth")
 	cluster.DashboardAddr = utils.ArgumentMust(d, "--product-dashboard")
+	cluster.BackupAddr = utils.ArgumentMust(d, "--product-backup")
 
 	value, err := json.MarshalIndent(&cluster, "", " ")
 	err = client.Create(models.DashboardProductPath("__config__", cluster.DashboardAddr), value)
@@ -463,6 +468,7 @@ func (t *cmdAdmin) handleAddProxy(d map[string]interface{}) {
 	cluster.ProductName = utils.ArgumentMust(d, "--product")
 	cluster.ProductAuth = utils.ArgumentMust(d, "--product-auth")
 	cluster.DashboardAddr = utils.ArgumentMust(d, "--product-dashboard")
+	cluster.BackupAddr = utils.ArgumentMust(d, "--product-backup")
 
 	value, err := json.MarshalIndent(&cluster, "", " ")
 	err = client.Create(models.ProxyProductPath("__config__", utils.ArgumentMust(d, "--proxy-addr")), value)
@@ -470,4 +476,28 @@ func (t *cmdAdmin) handleAddProxy(d map[string]interface{}) {
 		log.PanicErrorf(err, "add proxy failed")
 	}
 	log.Warnf("add proxy end!")
+}
+
+func (t *cmdAdmin) handleDelProxy(d map[string]interface{}) {
+	log.Warnf("del proxy start!")
+	client := t.newTopomClient(d)
+	defer client.Close()
+
+	err := client.Delete(models.ProxyProductPath("__config__", utils.ArgumentMust(d, "--proxy-addr")))
+	if err != nil {
+		log.PanicErrorf(err, "del proxy failed")
+	}
+	log.Warnf("del proxy end!")
+}
+
+func (t *cmdAdmin) handleDelProduct(d map[string]interface{}) {
+	log.Warnf("del product start!")
+	client := t.newTopomClient(d)
+	defer client.Close()
+
+	err := client.Delete(models.DashboardProductPath("__config__", utils.ArgumentMust(d, "--product-dashboard")))
+	if err != nil {
+		log.PanicErrorf(err, "del product failed")
+	}
+	log.Warnf("del product end!")
 }

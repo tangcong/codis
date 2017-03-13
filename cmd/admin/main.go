@@ -56,8 +56,10 @@ Usage:
 	codis-admin [-v] --config-convert=FILE
 	codis-admin [-v] --config-restore=FILE       --product=NAME (--zookeeper=ADDR|--etcd=ADDR|--filesystem=ROOT) [--confirm]
 	codis-admin [-v] --dashboard-list                           (--zookeeper=ADDR|--etcd=ADDR|--filesystem=ROOT)
-	codis-admin [-v] --add-product  --product=NAME --product-dashboard=ADDR --product-auth=pwd (--zookeeper=ADDR|--etcd=ADDR|--filesystem=ROOT)
-	codis-admin [-v] --add-proxy  --product=NAME --product-dashboard=ADDR --product-auth=pwd --proxy-addr=addr (--zookeeper=ADDR|--etcd=ADDR|--filesystem=ROOT)
+	codis-admin [-v] --add-product  --product=NAME --product-dashboard=ADDR --product-auth=pwd --product-backup=ADDR (--zookeeper=ADDR|--etcd=ADDR|--filesystem=ROOT)
+	codis-admin [-v] --add-proxy  --product=NAME --product-dashboard=ADDR --product-auth=pwd --proxy-addr=addr --product-backup=ADDR (--zookeeper=ADDR|--etcd=ADDR|--filesystem=ROOT)
+	codis-admin [-v] --del-product  --product-dashboard=ADDR (--zookeeper=ADDR|--etcd=ADDR|--filesystem=ROOT)
+	codis-admin [-v] --del-proxy  --proxy-addr=addr (--zookeeper=ADDR|--etcd=ADDR|--filesystem=ROOT)
 
 Options:
 	-a AUTH, --auth=AUTH
