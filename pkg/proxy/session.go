@@ -64,12 +64,12 @@ func (s *Session) String() string {
 
 func NewSession(sock net.Conn, config *Config, reqs chan *Request) *Session {
 	c := redis.NewConn(sock,
-		config.SessionRecvBufsize.Int(),
-		config.SessionSendBufsize.Int(),
+		config.SessionRecvBufsize.AsInt(),
+		config.SessionSendBufsize.AsInt(),
 	)
-	c.ReaderTimeout = config.SessionRecvTimeout.Get()
-	c.WriterTimeout = config.SessionSendTimeout.Get()
-	c.SetKeepAlivePeriod(config.SessionKeepAlivePeriod.Get())
+	c.ReaderTimeout = config.SessionRecvTimeout.Duration()
+	c.WriterTimeout = config.SessionSendTimeout.Duration()
+	c.SetKeepAlivePeriod(config.SessionKeepAlivePeriod.Duration())
 
 	s := &Session{
 		Conn: c, config: config,
@@ -168,9 +168,9 @@ func (s *Session) loopReader(tasks chan<- *Request, d *Router) (err error) {
 
 		r := &Request{}
 		r.Multi = multi
-		r.Start = start.UnixNano()
 		r.Batch = &sync.WaitGroup{}
 		r.Database = s.database
+		r.UnixNano = start.UnixNano()
 
 		if len(tasks) == cap(tasks) {
 			return ErrTooManyPipelinedRequests
@@ -651,7 +651,7 @@ func (s *Session) getOpStats(opstr string) *opStats {
 func (s *Session) incrOpStats(r *Request, t redis.RespType) {
 	e := s.getOpStats(r.OpStr)
 	e.calls.Incr()
-	e.nsecs.Add(time.Now().UnixNano() - r.Start)
+	e.nsecs.Add(time.Now().UnixNano() - r.UnixNano)
 	switch t {
 	case redis.TypeError:
 		e.redis.errors.Incr()
@@ -692,7 +692,7 @@ func (s *Session) flushOpStats(force bool) {
 
 	incrOpTotal(s.stats.total.Swap(0))
 	for _, e := range s.stats.opmap {
-		if e.calls.Get() != 0 || e.fails.Get() != 0 {
+		if e.calls.Int64() != 0 || e.fails.Int64() != 0 {
 			incrOpStats(e)
 		}
 	}

@@ -13,8 +13,8 @@ import (
 
 var allocOffheapBytes atomic2.Int64
 
-func OffheapBytes() int {
-	return int(allocOffheapBytes.Get())
+func OffheapBytes() int64 {
+	return allocOffheapBytes.Int64()
 }
 
 type cgoSlice struct {
@@ -23,7 +23,7 @@ type cgoSlice struct {
 }
 
 func newCGoSlice(n int, force bool) Slice {
-	after := int(allocOffheapBytes.Add(int64(n)))
+	after := allocOffheapBytes.Add(int64(n))
 	if !force && after > MaxOffheapBytes() {
 		allocOffheapBytes.Sub(int64(n))
 		return nil

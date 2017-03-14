@@ -367,13 +367,13 @@ function processSentinels(codis_stats, group_stats, codis_name) {
                         }
                         for (var runid in runids) {
                             if (g.runids[runid] === undefined) {
-                                x.runid_error = "group=" + g.id + ",server=" + runids[runid] + ",runid="
+                                x.runid_error = "[+]group=" + g.id + ",server=" + runids[runid] + ",runid="
                                     + ((runid != "") ? runid : "NA");
                             }
                         }
                         for (var runid in g.runids) {
                             if (runids[runid] === undefined) {
-                                x.runid_error = "group=" + g.id + ",server=" + g.runids[runid] + ",runid=" + runid;
+                                x.runid_error = "[-]group=" + g.id + ",server=" + g.runids[runid] + ",runid=" + runid;
                             }
                         }
                     }
@@ -548,6 +548,7 @@ function processGroupStats(codis_stats) {
                 x.canslaveof = "create";
                 x.actionstate = "";
             }
+            x.server_text = x.server;
         }
     }
     return {group_array: group_array, keys: keys, memory: memory};
@@ -685,7 +686,6 @@ dashboard.controller('MainCodisCtrl', ['$scope', '$http', '$uibModal', '$timeout
                     var ha_master_ingroup = false;
                     for (var j = 0; j < g.servers.length; j ++) {
                         var x = g.servers[j];
-                        x.server_text = x.server;
                         if (ha_master == undefined) {
                             x.ha_status = "ha_undefined";
                             continue;
@@ -1170,12 +1170,12 @@ dashboard.controller('MainCodisCtrl', ['$scope', '$http', '$uibModal', '$timeout
             }
         }
 
-        $scope.createSlotAction = function (slot_id, group_id) {
+        $scope.createSlotActionSome = function (slots_num, group_from, group_to) {
             var codis_name = $scope.codis_name;
-            if (isValidInput(codis_name) && isValidInput(slot_id) && isValidInput(group_id)) {
-                alertAction("Migrate Slots-[" + slot_id + "] to Group-[" + group_id + "]", function () {
+            if (isValidInput(codis_name) && isValidInput(slots_num) && isValidInput(group_from) && isValidInput(group_to)) {
+                alertAction("Migrate " + slots_num + " Slots from Group-[" + group_from + "] to Group-[" + group_to + "]", function () {
                     var xauth = genXAuth(codis_name);
-                    var url = concatUrl("/api/topom/slots/action/create/" + xauth + "/" + slot_id + "/" + group_id, codis_name);
+                    var url = concatUrl("/api/topom/slots/action/create-some/" + xauth + "/" + group_from + "/" + group_to + "/" + slots_num, codis_name);
                     $http.put(url).then(function () {
                         $scope.refreshStats();
                     }, function (failedResp) {

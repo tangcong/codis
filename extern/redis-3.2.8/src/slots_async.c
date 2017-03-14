@@ -1,228 +1,60 @@
 #include "server.h"
 
-/* ============================ Iterator for Lazy Release ================================== */
+/* ============================ Worker Thread for Lazy Release ============================= */
 
 typedef struct {
-    robj *val;
-    unsigned long cursor;
-} lazyReleaseIterator;
+    pthread_t thread;
+    pthread_mutex_t mutex;
+    pthread_cond_t cond;
+    list *objs;
+} lazyReleaseWorker;
 
-static lazyReleaseIterator *
-createLazyReleaseIterator(robj *val) {
-    lazyReleaseIterator *it = zmalloc(sizeof(lazyReleaseIterator));
-    it->val = val;
-    incrRefCount(it->val);
-    it->cursor = 0;
-    return it;
+static void *
+lazyReleaseWorkerMain(void *args) {
+    lazyReleaseWorker *p = args;
+    while (1) {
+        pthread_mutex_lock(&p->mutex);
+        while (listLength(p->objs) == 0) {
+            pthread_cond_wait(&p->cond, &p->mutex);
+        }
+        listNode *head = listFirst(p->objs);
+        robj *o = listNodeValue(head);
+        listDelNode(p->objs, head);
+        pthread_mutex_unlock(&p->mutex);
+
+        decrRefCount(o);
+    }
+    return NULL;
 }
 
 static void
-freeLazyReleaseIterator(lazyReleaseIterator *it) {
-    if (it->val != NULL) {
-        decrRefCount(it->val);
+lazyReleaseObject(robj *o) {
+    serverAssert(o->refcount == 1);
+    lazyReleaseWorker *p = server.slotsmgrt_lazy_release;
+    pthread_mutex_lock(&p->mutex);
+    if (listLength(p->objs) == 0) {
+        pthread_cond_broadcast(&p->cond);
     }
-    zfree(it);
+    listAddNodeTail(p->objs, o);
+    pthread_mutex_unlock(&p->mutex);
 }
 
-static int
-lazyReleaseIteratorHasNext(lazyReleaseIterator *it) {
-    return it->val != NULL;
-}
-
-static void
-lazyReleaseIteratorScanCallback(void *data, const dictEntry *de) {
-    void **pd = (void **)data;
-    list *l = pd[0];
-
-    robj *field = dictGetKey(de);
-    incrRefCount(field);
-    listAddNodeTail(l, field);
-}
-
-static void
-lazyReleaseIteratorNext(lazyReleaseIterator *it, int step) {
-    robj *val = it->val;
-    serverAssert(val != NULL);
-
-    unsigned int limit = step * 2;
-    if (limit < 100) {
-        limit = 100;
+static lazyReleaseWorker *
+createLazyReleaseWorkerThread() {
+    lazyReleaseWorker *p = zmalloc(sizeof(lazyReleaseWorker));
+    pthread_mutex_init(&p->mutex, NULL);
+    pthread_cond_init(&p->cond, NULL);
+    p->objs = listCreate();
+    if (pthread_create(&p->thread, NULL, lazyReleaseWorkerMain, p) != 0) {
+        serverLog(LL_WARNING,"Fatal: Can't initialize Worker Thread for Lazy Release Jobs.");
+        exit(1);
     }
-
-    if (val->type == OBJ_LIST) {
-        if (listTypeLength(val) <= limit) {
-            decrRefCount(val);
-            it->val = NULL;
-        } else {
-            for (int i = 0; i < step; i ++) {
-                robj *value = listTypePop(val, LIST_HEAD);
-                decrRefCount(value);
-            }
-        }
-        return;
-    }
-
-    if (val->type == OBJ_HASH || val->type == OBJ_SET) {
-        dict *ht = val->ptr;
-        if (dictSize(ht) <= limit) {
-            decrRefCount(val);
-            it->val = NULL;
-        } else {
-            list *ll = listCreate();
-            listSetFreeMethod(ll, decrRefCountVoid);
-            int loop = step;
-            void *pd[] = {ll};
-            do {
-                it->cursor = dictScan(ht, it->cursor, lazyReleaseIteratorScanCallback, pd);
-            } while (it->cursor != 0 && listLength(ll) < (unsigned long)step && (-- loop) >= 0);
-
-            while (listLength(ll) != 0) {
-                listNode *head = listFirst(ll);
-                robj *field = listNodeValue(head);
-                dictDelete(ht, field);
-                listDelNode(ll, head);
-            }
-            listRelease(ll);
-        }
-        return;
-    }
-
-    if (val->type == OBJ_ZSET) {
-        zset *zs = val->ptr;
-        dict *ht = zs->dict;
-        if (dictSize(ht) <= limit) {
-            decrRefCount(val);
-            it->val = NULL;
-        } else {
-            zskiplist *zsl = zs->zsl;
-            for (int i = 0; i < step; i ++) {
-                zskiplistNode *node = zsl->header->level[0].forward;
-                robj *field = node->obj;
-                incrRefCount(field);
-                zslDelete(zsl, node->score, field);
-                dictDelete(ht, field);
-                decrRefCount(field);
-            }
-        }
-        return;
-    }
-
-    serverPanic("unknown object type");
-}
-
-static int
-lazyReleaseIteratorRemains(lazyReleaseIterator *it) {
-    robj *val = it->val;
-    if (val == NULL) {
-        return 0;
-    }
-    if (val->type == OBJ_LIST) {
-        return listTypeLength(val);
-    }
-    if (val->type == OBJ_HASH) {
-        return hashTypeLength(val);
-    }
-    if (val->type == OBJ_SET) {
-        return setTypeSize(val);
-    }
-    if (val->type == OBJ_ZSET) {
-        return zsetLength(val);
-    }
-    return -1;
-}
-
-static int
-slotsmgrtLazyReleaseStep(int step) {
-    list *ll = server.slotsmgrt_lazy_release;
-    if (listLength(ll) != 0) {
-        listNode *head = listFirst(ll);
-        lazyReleaseIterator *it = listNodeValue(head);
-        if (lazyReleaseIteratorHasNext(it)) {
-            lazyReleaseIteratorNext(it, step);
-        } else {
-            freeLazyReleaseIterator(it);
-            listDelNode(ll, head);
-        }
-        return 1;
-    }
-    return 0;
-}
-
-static void
-slotsmgrtLazyReleaseMicroseconds(long long usecs) {
-    long long deadline = ustime() + usecs;
-    while (slotsmgrtLazyReleaseStep(50)) {
-        if (ustime() >= deadline) {
-            return;
-        }
-    }
-}
-
-static struct {
-    long long last_numcommands;
-    int step;
-} lazy_release_options = {
-    .last_numcommands = 0,
-    .step = 1,
-};
-
-void
-slotsmgrtLazyReleaseCleanup() {
-    long long ops = server.stat_numcommands - lazy_release_options.last_numcommands;
-    if (ops < 0) {
-        ops = 0;
-    }
-    if (ops > 30) {
-        lazy_release_options.step = 1 + (1000 / ops) * 3;
-    } else {
-        lazy_release_options.step = 100;
-    }
-    lazy_release_options.last_numcommands = server.stat_numcommands;
-
-    long long usecs = lazy_release_options.step / 10 * 100;
-    if (usecs != 0) {
-        slotsmgrtLazyReleaseMicroseconds(usecs);
-    }
+    return p;
 }
 
 void
-slotsmgrtLazyReleaseIncrementally() {
-    slotsmgrtLazyReleaseStep(lazy_release_options.step);
-}
-
-/* *
- * SLOTSMGRT-LAZY-RELEASE $microseconds
- * */
-void
-slotsmgrtLazyReleaseCommand(client *c) {
-    if (c->argc != 1 && c->argc != 2) {
-        addReplyError(c, "wrong number of arguments for SLOTSMGRT-LAZY-RELEASE");
-        return;
-    }
-    long long usecs = 1;
-    if (c->argc != 1) {
-        if (getLongLongFromObject(c->argv[1], &usecs) != C_OK ||
-                !(usecs >= 0 && usecs <= INT_MAX)) {
-            addReplyErrorFormat(c, "invalid value of usecs (%s)",
-                    (char *)c->argv[1]->ptr);
-            return;
-        }
-    }
-    if (usecs != 0) {
-        slotsmgrtLazyReleaseMicroseconds(usecs);
-    }
-
-    list *ll = server.slotsmgrt_lazy_release;
-
-    addReplyMultiBulkLen(c, 2);
-    addReplyLongLong(c, listLength(ll));
-
-    if (listLength(ll) != 0) {
-        lazyReleaseIterator *it = listNodeValue(listFirst(ll));
-        addReplyLongLong(c, lazyReleaseIteratorRemains(it));
-    } else {
-        addReplyLongLong(c, 0);
-    }
+slotsmgrtInitLazyReleaseWorkerThread() {
+    server.slotsmgrt_lazy_release = createLazyReleaseWorkerThread();
 }
 
 /* ============================ Iterator for Data Migration ================================ */
@@ -241,7 +73,7 @@ typedef struct {
     unsigned long cursor;
     unsigned long lindex;
     unsigned long zindex;
-    int chunked;
+    unsigned long chunked_msgs;
 } singleObjectIterator;
 
 static singleObjectIterator *
@@ -255,7 +87,7 @@ createSingleObjectIterator(robj *key) {
     it->cursor = 0;
     it->lindex = 0;
     it->zindex = 0;
-    it->chunked = 0;
+    it->chunked_msgs = 0;
     return it;
 }
 
@@ -414,18 +246,18 @@ singleObjectIteratorNext(client *c, singleObjectIterator *it,
         incrRefCount(it->val);
         it->expire = getExpire(c->db, key);
 
-        int extra_msgs = 0;
+        int leading_msgs = 0;
 
-        slotsmgrtAsyncClient *client = getSlotsmgrtAsyncClient(c->db->id);
-        if (client->c == c) {
-            if (client->used == 0) {
-                client->used = 1;
+        slotsmgrtAsyncClient *ac = getSlotsmgrtAsyncClient(c->db->id);
+        if (ac->c == c) {
+            if (ac->used == 0) {
+                ac->used = 1;
                 if (server.requirepass != NULL) {
                     /* SLOTSRESTORE-ASYNC-AUTH $password */
                     addReplyMultiBulkLen(c, 2);
                     addReplyBulkCString(c, "SLOTSRESTORE-ASYNC-AUTH");
                     addReplyBulkCString(c, server.requirepass);
-                    extra_msgs += 1;
+                    leading_msgs += 1;
                 }
                 do {
                     /* SLOTSRESTORE-ASYNC select $db */
@@ -433,7 +265,7 @@ singleObjectIteratorNext(client *c, singleObjectIterator *it,
                     addReplyBulkCString(c, "SLOTSRESTORE-ASYNC");
                     addReplyBulkCString(c, "select");
                     addReplyBulkLongLong(c, c->db->id);
-                    extra_msgs += 1;
+                    leading_msgs += 1;
                 } while (0);
             }
         }
@@ -444,13 +276,15 @@ singleObjectIteratorNext(client *c, singleObjectIterator *it,
         addReplyBulkCString(c, "del");
         addReplyBulk(c, key);
 
-        if (numberOfRestoreCommandsFromObject(val, maxbulks) != 1) {
+        long n = numberOfRestoreCommandsFromObject(val, maxbulks);
+        if (n >= 2) {
             it->stage = STAGE_CHUNKED;
-            it->chunked = 1;
+            it->chunked_msgs = n;
         } else {
             it->stage = STAGE_PAYLOAD;
+            it->chunked_msgs = 0;
         }
-        return 1 + extra_msgs;
+        return 1 + leading_msgs;
     }
 
     robj *val = it->val;
@@ -680,7 +514,7 @@ batchedObjectIteratorHasNext(batchedObjectIterator *it) {
         if (sp->val != NULL) {
             incrRefCount(sp->key);
             listAddNodeTail(it->removed_keys, sp->key);
-            if (sp->chunked) {
+            if (sp->chunked_msgs != 0) {
                 incrRefCount(sp->val);
                 listAddNodeTail(it->chunked_vals, sp->val);
             }
@@ -1286,6 +1120,137 @@ slotsmgrtAsyncCancelCommand(client *c) {
     addReplyLongLong(c, releaseSlotsmgrtAsyncClient(c->db->id, "interrupted: canceled"));
 }
 
+/* ============================ SlotsmgrtAsyncStatus ======================================= */
+
+static void
+singleObjectIteratorStatus(client *c, singleObjectIterator *it) {
+    if (it == NULL) {
+        addReply(c, shared.nullmultibulk);
+        return;
+    }
+    void *ptr = addDeferredMultiBulkLength(c);
+    int fields = 0;
+
+    fields ++; addReplyBulkCString(c, "key");
+    addReplyBulk(c, it->key);
+
+    fields ++; addReplyBulkCString(c, "val.type");
+    addReplyBulkLongLong(c, it->val == NULL ? -1 : it->val->type);
+
+    fields ++; addReplyBulkCString(c, "stage");
+    addReplyBulkLongLong(c, it->stage);
+
+    fields ++; addReplyBulkCString(c, "expire");
+    addReplyBulkLongLong(c, it->expire);
+
+    fields ++; addReplyBulkCString(c, "cursor");
+    addReplyBulkLongLong(c, it->cursor);
+
+    fields ++; addReplyBulkCString(c, "lindex");
+    addReplyBulkLongLong(c, it->lindex);
+
+    fields ++; addReplyBulkCString(c, "zindex");
+    addReplyBulkLongLong(c, it->zindex);
+
+    fields ++; addReplyBulkCString(c, "chunked_msgs");
+    addReplyBulkLongLong(c, it->chunked_msgs);
+
+    setDeferredMultiBulkLength(c, ptr, fields * 2);
+}
+
+static void
+batchedObjectIteratorStatus(client *c, batchedObjectIterator *it) {
+    if (it == NULL) {
+        addReply(c, shared.nullmultibulk);
+        return;
+    }
+    void *ptr = addDeferredMultiBulkLength(c);
+    int fields = 0;
+
+    fields ++; addReplyBulkCString(c, "keys");
+    addReplyMultiBulkLen(c, 2);
+    addReplyBulkLongLong(c, dictSize(it->keys));
+    addReplyMultiBulkLen(c, dictSize(it->keys));
+    dictIterator *di = dictGetIterator(it->keys);
+    dictEntry *de;
+    while((de = dictNext(di)) != NULL) {
+        addReplyBulk(c, dictGetKey(de));
+    }
+    dictReleaseIterator(di);
+
+    fields ++; addReplyBulkCString(c, "timeout");
+    addReplyBulkLongLong(c, it->timeout);
+
+    fields ++; addReplyBulkCString(c, "maxbulks");
+    addReplyBulkLongLong(c, it->maxbulks);
+
+    fields ++; addReplyBulkCString(c, "maxbytes");
+    addReplyBulkLongLong(c, it->maxbytes);
+
+    fields ++; addReplyBulkCString(c, "estimate_msgs");
+    addReplyBulkLongLong(c, it->estimate_msgs);
+
+    fields ++; addReplyBulkCString(c, "removed_keys");
+    addReplyBulkLongLong(c, listLength(it->removed_keys));
+
+    fields ++; addReplyBulkCString(c, "chunked_vals");
+    addReplyBulkLongLong(c, listLength(it->chunked_vals));
+
+    fields ++; addReplyBulkCString(c, "iterators");
+    addReplyMultiBulkLen(c, 2);
+    addReplyBulkLongLong(c, listLength(it->list));
+    singleObjectIterator *sp = NULL;
+    if (listLength(it->list) != 0) {
+        sp = listNodeValue(listFirst(it->list));
+    }
+    singleObjectIteratorStatus(c, sp);
+
+    setDeferredMultiBulkLength(c, ptr, fields * 2);
+}
+
+/* *
+ * SLOTSMGRT-ASYNC-STATUS
+ * */
+void
+slotsmgrtAsyncStatusCommand(client *c) {
+    slotsmgrtAsyncClient *ac = getSlotsmgrtAsyncClient(c->db->id);
+    if (ac->c == NULL) {
+        addReply(c, shared.nullmultibulk);
+        return;
+    }
+    void *ptr = addDeferredMultiBulkLength(c);
+    int fields = 0;
+
+    fields ++; addReplyBulkCString(c, "host");
+    addReplyBulkCString(c, ac->host);
+
+    fields ++; addReplyBulkCString(c, "port");
+    addReplyBulkLongLong(c, ac->port);
+
+    fields ++; addReplyBulkCString(c, "used");
+    addReplyBulkLongLong(c, ac->used);
+
+    fields ++; addReplyBulkCString(c, "timeout");
+    addReplyBulkLongLong(c, ac->timeout);
+
+    fields ++; addReplyBulkCString(c, "lastuse");
+    addReplyBulkLongLong(c, ac->lastuse);
+
+    fields ++; addReplyBulkCString(c, "since_lastuse");
+    addReplyBulkLongLong(c, mstime() - ac->lastuse);
+
+    fields ++; addReplyBulkCString(c, "sending_msgs");
+    addReplyBulkLongLong(c, ac->sending_msgs);
+
+    fields ++; addReplyBulkCString(c, "blocked_clients");
+    addReplyBulkLongLong(c, listLength(ac->blocked_list));
+
+    fields ++; addReplyBulkCString(c, "batched_iterator");
+    batchedObjectIteratorStatus(c, ac->batched_iter);
+
+    setDeferredMultiBulkLength(c, ptr, fields * 2);
+}
+
 /* ============================ SlotsmgrtExecWrapper ======================================= */
 
 /* *
@@ -1758,9 +1723,14 @@ slotsrestoreAsyncAckHandle(client *c) {
         list *ll = it->chunked_vals;
         while (listLength(ll) != 0) {
             listNode *head = listFirst(ll);
-            robj *val = listNodeValue(head);
-            listAddNodeTail(server.slotsmgrt_lazy_release, createLazyReleaseIterator(val));
+            robj *o = listNodeValue(head);
+            incrRefCount(o);
             listDelNode(ll, head);
+            if (o->refcount != 1) {
+                decrRefCount(o);
+            } else {
+                lazyReleaseObject(o);
+            }
         }
     }
 

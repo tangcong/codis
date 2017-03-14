@@ -188,6 +188,9 @@ func (s *Topom) GroupDelServer(gid int, addr string) error {
 			slice = append(slice, x)
 		}
 	}
+	if len(slice) == 0 {
+		g.OutOfSync = false
+	}
 
 	g.Servers = slice
 
@@ -220,7 +223,7 @@ func (s *Topom) GroupPromoteServer(gid int, addr string) error {
 			return errors.Errorf("group-[%d] can't promote master", g.Id)
 		}
 	}
-	if n := s.action.executor.Get(); n != 0 {
+	if n := s.action.executor.Int64(); n != 0 {
 		return errors.Errorf("slots-migration is running = %d", n)
 	}
 
@@ -272,8 +275,8 @@ func (s *Topom) GroupPromoteServer(gid int, addr string) error {
 			}
 			groupIds := map[int]bool{g.Id: true}
 			sentinel := redis.NewSentinel(s.config.ProductName, s.config.ProductAuth)
-			if err := sentinel.Unmonitor(groupIds, time.Second*5, p.Servers...); err != nil {
-				log.WarnErrorf(err, "group-[%d] unmonitor sentinels failed", g.Id)
+			if err := sentinel.RemoveGroups(p.Servers, time.Second*5, groupIds); err != nil {
+				log.WarnErrorf(err, "group-[%d] remove sentinels failed", g.Id)
 			}
 			if s.ha.masters != nil {
 				delete(s.ha.masters, gid)
@@ -295,7 +298,6 @@ func (s *Topom) GroupPromoteServer(gid int, addr string) error {
 		for _, x := range slice {
 			x.Action.Index = 0
 			x.Action.State = models.ActionNothing
-			x.ReplicaGroup = false
 		}
 
 		g.Servers = slice

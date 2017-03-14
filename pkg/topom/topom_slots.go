@@ -4,6 +4,8 @@
 package topom
 
 import (
+	"sort"
+
 	"github.com/CodisLabs/codis/pkg/models"
 	"github.com/CodisLabs/codis/pkg/utils/errors"
 	"github.com/CodisLabs/codis/pkg/utils/log"
@@ -18,6 +20,14 @@ func (s *Topom) SlotCreateAction(sid int, gid int) error {
 		return err
 	}
 
+	g, err := ctx.getGroup(gid)
+	if err != nil {
+		return err
+	}
+	if len(g.Servers) == 0 {
+		return errors.Errorf("group-[%d] is empty", gid)
+	}
+
 	m, err := ctx.getSlotMapping(sid)
 	if err != nil {
 		return err
@@ -28,20 +38,117 @@ func (s *Topom) SlotCreateAction(sid int, gid int) error {
 	if m.GroupId == gid {
 		return errors.Errorf("slot-[%d] already in group-[%d]", sid, gid)
 	}
-
-	g, err := ctx.getGroup(gid)
-	if err != nil {
-		return err
-	}
-	if len(g.Servers) == 0 {
-		return errors.Errorf("group-[%d] is empty", gid)
-	}
 	defer s.dirtySlotsCache(m.Id)
 
 	m.Action.State = models.ActionPending
 	m.Action.Index = ctx.maxSlotActionIndex() + 1
 	m.Action.TargetId = g.Id
 	return s.storeUpdateSlotMapping(m)
+}
+
+func (s *Topom) SlotCreateActionSome(groupFrom, groupTo int, numSlots int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ctx, err := s.newContext()
+	if err != nil {
+		return err
+	}
+
+	g, err := ctx.getGroup(groupTo)
+	if err != nil {
+		return err
+	}
+	if len(g.Servers) == 0 {
+		return errors.Errorf("group-[%d] is empty", g.Id)
+	}
+
+	var pending []int
+	for _, m := range ctx.slots {
+		if len(pending) >= numSlots {
+			break
+		}
+		if m.GroupId != groupFrom {
+			continue
+		}
+		if m.GroupId == g.Id || m.Action.State != models.ActionNothing {
+			continue
+		}
+		pending = append(pending, m.Id)
+	}
+
+	for _, sid := range pending {
+		m, err := ctx.getSlotMapping(sid)
+		if err != nil {
+			return err
+		}
+		defer s.dirtySlotsCache(m.Id)
+
+		m.Action.State = models.ActionPending
+		m.Action.Index = ctx.maxSlotActionIndex() + 1
+		m.Action.TargetId = g.Id
+		if err := s.storeUpdateSlotMapping(m); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Topom) SlotCreateActionRange(beg, end int, gid int, must bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ctx, err := s.newContext()
+	if err != nil {
+		return err
+	}
+
+	if !(beg >= 0 && beg <= end && end < MaxSlotNum) {
+		return errors.Errorf("invalid slot range [%d,%d]", beg, end)
+	}
+
+	g, err := ctx.getGroup(gid)
+	if err != nil {
+		return err
+	}
+	if len(g.Servers) == 0 {
+		return errors.Errorf("group-[%d] is empty", g.Id)
+	}
+
+	var pending []int
+	for sid := beg; sid <= end; sid++ {
+		m, err := ctx.getSlotMapping(sid)
+		if err != nil {
+			return err
+		}
+		if m.Action.State != models.ActionNothing {
+			if !must {
+				continue
+			}
+			return errors.Errorf("slot-[%d] action already exists", sid)
+		}
+		if m.GroupId == g.Id {
+			if !must {
+				continue
+			}
+			return errors.Errorf("slot-[%d] already in group-[%d]", sid, g.Id)
+		}
+		pending = append(pending, m.Id)
+	}
+
+	for _, sid := range pending {
+		m, err := ctx.getSlotMapping(sid)
+		if err != nil {
+			return err
+		}
+		defer s.dirtySlotsCache(m.Id)
+
+		m.Action.State = models.ActionPending
+		m.Action.Index = ctx.maxSlotActionIndex() + 1
+		m.Action.TargetId = g.Id
+		if err := s.storeUpdateSlotMapping(m); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Topom) SlotRemoveAction(sid int) error {
@@ -72,6 +179,10 @@ func (s *Topom) SlotRemoveAction(sid int) error {
 }
 
 func (s *Topom) SlotActionPrepare() (int, bool, error) {
+	return s.SlotActionPrepareFilter(nil, nil)
+}
+
+func (s *Topom) SlotActionPrepareFilter(accept, update func(m *models.SlotMapping) bool) (int, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ctx, err := s.newContext()
@@ -79,8 +190,43 @@ func (s *Topom) SlotActionPrepare() (int, bool, error) {
 		return 0, false, err
 	}
 
-	m := ctx.minSlotActionIndex()
+	var minActionIndex = func(filter func(m *models.SlotMapping) bool) (picked *models.SlotMapping) {
+		for _, m := range ctx.slots {
+			if m.Action.State == models.ActionNothing {
+				continue
+			}
+			if filter(m) {
+				if picked != nil && picked.Action.Index < m.Action.Index {
+					continue
+				}
+				if accept == nil || accept(m) {
+					picked = m
+				}
+			}
+		}
+		return picked
+	}
+
+	var m = func() *models.SlotMapping {
+		var picked = minActionIndex(func(m *models.SlotMapping) bool {
+			return m.Action.State != models.ActionPending
+		})
+		if picked != nil {
+			return picked
+		}
+		if s.action.disabled.IsTrue() {
+			return nil
+		}
+		return minActionIndex(func(m *models.SlotMapping) bool {
+			return m.Action.State == models.ActionPending
+		})
+	}()
+
 	if m == nil {
+		return 0, false, nil
+	}
+
+	if update != nil && !update(m) {
 		return 0, false, nil
 	}
 
@@ -90,9 +236,6 @@ func (s *Topom) SlotActionPrepare() (int, bool, error) {
 
 	case models.ActionPending:
 
-		if s.action.disabled.Get() {
-			return 0, false, nil
-		}
 		defer s.dirtySlotsCache(m.Id)
 
 		m.Action.State = models.ActionPreparing
@@ -222,7 +365,7 @@ func (s *Topom) newSlotActionExecutor(sid int) (func(db int) (remains int, nextd
 
 	case models.ActionMigrating:
 
-		if s.action.disabled.Get() {
+		if s.action.disabled.IsTrue() {
 			return nil, nil
 		}
 		if ctx.isGroupPromoting(m.GroupId) {
@@ -262,9 +405,9 @@ func (s *Topom) newSlotActionExecutor(sid int) (func(db int) (remains int, nextd
 			case models.ForwardSemiAsync:
 				var option = &redis.MigrateSlotAsyncOption{
 					MaxBulks: s.config.MigrationAsyncMaxBulks,
-					MaxBytes: s.config.MigrationAsyncMaxBytes.Int(),
+					MaxBytes: s.config.MigrationAsyncMaxBytes.AsInt(),
 					NumKeys:  s.config.MigrationAsyncNumKeys,
-					Timeout:  s.config.MigrationTimeout.Get(),
+					Timeout:  s.config.MigrationTimeout.Duration(),
 				}
 				do = func() (int, error) {
 					return c.MigrateSlotAsync(sid, dest, option)
@@ -411,14 +554,18 @@ func (s *Topom) SlotsRebalance(confirm bool) (map[int]int, error) {
 		return nil, errors.Errorf("no valid group could be found")
 	}
 
-	var bound = (len(ctx.slots) + len(count) - 1) / len(count)
+	var bound = (MaxSlotNum + len(count) - 1) / len(count)
 	var pending []int
 	for _, m := range ctx.slots {
 		if m.Action.State != models.ActionNothing {
 			count[m.Action.TargetId]++
 		}
 	}
-	for _, m := range ctx.slots {
+	for sid := 0; sid < MaxSlotNum; sid++ {
+		m, err := ctx.getSlotMapping(sid)
+		if err != nil {
+			return nil, err
+		}
 		if m.Action.State != models.ActionNothing {
 			continue
 		}
@@ -430,7 +577,17 @@ func (s *Topom) SlotsRebalance(confirm bool) (map[int]int, error) {
 	}
 
 	var plans = make(map[int]int)
+	var groupIds []int
 	for _, g := range ctx.group {
+		groupIds = append(groupIds, g.Id)
+	}
+	sort.Ints(groupIds)
+
+	for _, gid := range groupIds {
+		g, err := ctx.getGroup(gid)
+		if err != nil {
+			return nil, err
+		}
 		if len(g.Servers) != 0 {
 			for count[g.Id] < bound && len(pending) != 0 {
 				count[g.Id]++
@@ -441,7 +598,14 @@ func (s *Topom) SlotsRebalance(confirm bool) (map[int]int, error) {
 	if !confirm {
 		return plans, nil
 	}
-	for sid, gid := range plans {
+
+	var slotIds []int
+	for sid, _ := range plans {
+		slotIds = append(slotIds, sid)
+	}
+	sort.Ints(slotIds)
+
+	for _, sid := range slotIds {
 		m, err := ctx.getSlotMapping(sid)
 		if err != nil {
 			return nil, err
@@ -450,7 +614,7 @@ func (s *Topom) SlotsRebalance(confirm bool) (map[int]int, error) {
 
 		m.Action.State = models.ActionPending
 		m.Action.Index = ctx.maxSlotActionIndex() + 1
-		m.Action.TargetId = gid
+		m.Action.TargetId = plans[sid]
 		if err := s.storeUpdateSlotMapping(m); err != nil {
 			return nil, err
 		}

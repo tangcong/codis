@@ -315,8 +315,8 @@ struct redisCommand redisCommandTable[] = {
     {"slotsmgrttagone-async-dump",slotsmgrtTagOneAsyncDumpCommand,-4,"rm",0,NULL,0,0,0,0,0},
     {"slotsmgrt-async-fence",slotsmgrtAsyncFenceCommand,0,"r",0,NULL,0,0,0,0,0},
     {"slotsmgrt-async-cancel",slotsmgrtAsyncCancelCommand,0,"F",0,NULL,0,0,0,0,0},
+    {"slotsmgrt-async-status",slotsmgrtAsyncStatusCommand,0,"F",0,NULL,0,0,0,0,0},
     {"slotsmgrt-exec-wrapper",slotsmgrtExecWrapperCommand,-3,"wm",0,NULL,0,0,0,0,0},
-    {"slotsmgrt-lazy-release",slotsmgrtLazyReleaseCommand,-1,"r",0,NULL,0,0,0,0,0},
     {"slotsrestore-async",slotsrestoreAsyncCommand,-2,"w",0,NULL,0,0,0,0,0},
     {"slotsrestore-async-auth",slotsrestoreAsyncAuthCommand,2,"F",0,NULL,0,0,0,0,0},
     {"slotsrestore-async-ack",slotsrestoreAsyncAckCommand,3,"w",0,NULL,0,0,0,0,0},
@@ -1343,10 +1343,6 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
         slotsmgrtAsyncCleanup();
     }
 
-    run_with_period(100) {
-        slotsmgrtLazyReleaseCleanup();
-    }
-
     /* Cleanup expired MIGRATE cached sockets. */
     run_with_period(1000) {
         migrateCloseTimedoutSockets();
@@ -1495,7 +1491,8 @@ void createSharedObjects(void) {
     shared.lpop = createStringObject("LPOP",4);
     shared.lpush = createStringObject("LPUSH",5);
     for (j = 0; j < OBJ_SHARED_INTEGERS; j++) {
-        shared.integers[j] = createObject(OBJ_STRING,(void*)(long)j);
+        shared.integers[j] =
+            makeObjectShared(createObject(OBJ_STRING,(void*)(long)j));
         shared.integers[j]->encoding = OBJ_ENCODING_INT;
     }
     for (j = 0; j < OBJ_SHARED_BULKHDR_LEN; j++) {
@@ -1597,14 +1594,6 @@ void initServerConfig(void) {
     server.migrate_cached_sockets = dictCreate(&migrateCacheDictType,NULL);
     server.next_client_id = 1; /* Client IDs, start from 1 .*/
     server.loading_process_events_interval_bytes = (1024*1024*2);
-
-    server.slotsmgrt_cached_sockfds = dictCreate(&migrateCacheDictType, NULL);
-    server.slotsmgrt_cached_clients = zmalloc(sizeof(slotsmgrtAsyncClient) * server.dbnum);
-    for (j = 0; j < server.dbnum; j ++) {
-        slotsmgrtAsyncClient *ac = &server.slotsmgrt_cached_clients[j];
-        memset(ac, 0, sizeof(*ac));
-    }
-    server.slotsmgrt_lazy_release = listCreate();
 
     server.lruclock = getLRUClock();
     resetServerSaveParams();
@@ -1964,6 +1953,14 @@ void initServer(void) {
     adjustOpenFilesLimit();
     server.el = aeCreateEventLoop(server.maxclients+CONFIG_FDSET_INCR);
     server.db = zmalloc(sizeof(redisDb)*server.dbnum);
+
+    server.slotsmgrt_cached_sockfds = dictCreate(&migrateCacheDictType, NULL);
+    server.slotsmgrt_cached_clients = zmalloc(sizeof(slotsmgrtAsyncClient) * server.dbnum);
+    for (j = 0; j < server.dbnum; j ++) {
+        slotsmgrtAsyncClient *ac = &server.slotsmgrt_cached_clients[j];
+        memset(ac, 0, sizeof(*ac));
+    }
+    slotsmgrtInitLazyReleaseWorkerThread();
 
     /* Open the TCP listening socket for the user commands. */
     if (server.port != 0 &&
@@ -2599,10 +2596,6 @@ int processCommand(client *c) {
         flagTransaction(c);
         addReply(c, shared.slowscripterr);
         return C_OK;
-    }
-
-    if (c->cmd->proc != slotsrestoreAsyncAckCommand) {
-        slotsmgrtLazyReleaseIncrementally();
     }
 
     /* Exec the command */
