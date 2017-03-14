@@ -1,35 +1,22 @@
 package main
 
 import (
+	"bytes"
+	"encoding/binary"
 	"flag"
 	"fmt"
 	"github.com/garyburd/redigo/redis"
-	"math"
 	"os"
-	"reflect"
 )
 
 var addr, passwd string
+var sid, eid int
 
 func init() {
 	flag.StringVar(&addr, "addr", "127.0.0.1:6379", "address of redis-server")
 	flag.StringVar(&passwd, "auth", "vip", "auth passwd")
-}
-
-func keytype(c redis.Conn, key string) string {
-
-	if err := c.Send("type", key); err != nil {
-		panic(err)
-	}
-	if err := c.Flush(); err != nil {
-		panic(err)
-	}
-	switch t, err := redis.String(c.Receive()); {
-	case err != nil:
-		panic(err)
-	default:
-		return t
-	}
+	flag.IntVar(&sid, "sid", 0, "slot id start")
+	flag.IntVar(&eid, "eid", 1024, "slot id end")
 }
 
 func main() {
@@ -57,7 +44,7 @@ func main() {
 		panic(err)
 	}
 
-	for i := 0; i < 1024; i += 1 {
+	for i := sid; i < eid; i += 1 {
 		cursor := 0
 		for {
 			if err := c.Send("slotsscan", i, cursor); err != nil {
@@ -70,25 +57,23 @@ func main() {
 			case err != nil:
 				panic(err)
 			default:
-				for l, s := range values {
-					v := reflect.ValueOf(s)
-					if v.Kind() == reflect.Slice {
-						if l == 0 {
-							cursor = 0
-							for j := 0; j != v.Len(); j += 1 {
-								e := v.Index(j)
-								if e.Kind() == reflect.Uint8 {
-									cursor += int(e.Interface().(uint8)-'0') * int(math.Pow10(v.Len()-j-1))
-								}
-							}
-						} else {
-							if v.Kind() == reflect.Slice {
-								for j := 0; j != v.Len(); j += 1 {
-									fmt.Printf("slot|%d|cursor|%d|key|%s\n", i, cursor, v.Index(j))
-								}
-
+				for _, s := range values {
+					switch s.(type) {
+					case []byte:
+						reader := bytes.NewReader(s.([]byte))
+						binary.Read(reader, binary.LittleEndian, &cursor)
+					case []interface{}:
+						for _, v := range s.([]interface{}) {
+							switch v.(type) {
+							case []byte:
+								key := string(v.([]byte))
+								fmt.Printf("slotid|%d|cursor|%d|key|%s\n", i, cursor, key)
+							default:
+								fmt.Printf("inner unknown type, %t, %v\n", s, s)
 							}
 						}
+					default:
+						fmt.Printf("outer unknown type, %t, %v\n", s, s)
 					}
 				}
 			}
