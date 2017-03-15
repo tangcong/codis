@@ -1,12 +1,11 @@
 package main
 
 import (
-	"bytes"
-	"encoding/binary"
 	"flag"
 	"fmt"
 	"github.com/garyburd/redigo/redis"
 	"os"
+	"strconv"
 )
 
 var addr, passwd string
@@ -60,8 +59,7 @@ func main() {
 				for _, s := range values {
 					switch s.(type) {
 					case []byte:
-						reader := bytes.NewReader(s.([]byte))
-						binary.Read(reader, binary.LittleEndian, &cursor)
+						cursor, _ = strconv.Atoi(string(s.([]byte)))
 					case []interface{}:
 						for _, v := range s.([]interface{}) {
 							switch v.(type) {
