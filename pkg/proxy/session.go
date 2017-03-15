@@ -667,7 +667,7 @@ func (s *Session) incrOpFails(r *Request, err error) error {
 func (s *Session) incrWriteOpStats(r *Request, t redis.RespType) {
 	e := s.getOpStats("WriteCmd")
 	e.calls.Incr()
-	e.nsecs.Add(time.Now().UnixNano() - r.Start)
+	e.nsecs.Add(time.Now().UnixNano() - r.UnixNano)
 	switch t {
 	case redis.TypeError:
 		e.redis.errors.Incr()

@@ -47,7 +47,7 @@ func New(config *Config) (*Backup, error) {
 	s := &Backup{}
 	s.config = config
 	s.exit.C = make(chan struct{})
-	s.ignore = make([]byte, config.BackupHeapPlaceholder.Int())
+	s.ignore = make([]byte, config.BackupHeapPlaceholder.AsInt())
 
 	s.model = &models.Backup{
 		StartTime: time.Now().String(),
@@ -69,7 +69,7 @@ func New(config *Config) (*Backup, error) {
 
 	log.Warnf("[%p] create new backup:\n%s", s, s.model.Encode())
 
-	unsafe2.SetMaxOffheapBytes(config.BackupMaxOffheapBytes.Int())
+	unsafe2.SetMaxOffheapBytes(config.BackupMaxOffheapBytes.Int64())
 
 	go s.serveAdmin()
 	go s.serveBackup()

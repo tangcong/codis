@@ -650,15 +650,15 @@ func (s *Proxy) Stats(flags StatsFlags) *Stats {
 
 func (s *Proxy) makeBackupConn() (*backup.Conn, error) {
 	c, err := backup.DialTimeout(s.config.BackupAddr, time.Second*5,
-		s.config.BackendRecvBufsize.Int(),
-		s.config.BackendSendBufsize.Int())
+		s.config.BackendRecvBufsize.AsInt(),
+		s.config.BackendSendBufsize.AsInt())
 	if err != nil {
 		log.Warnf("proxy connect backup(%s) failed:%s\n", s.config.BackupAddr, err)
 		return nil, err
 	}
-	c.ReaderTimeout = s.config.BackendRecvTimeout.Get()
-	c.WriterTimeout = s.config.BackendSendTimeout.Get()
-	c.SetKeepAlivePeriod(s.config.BackendKeepAlivePeriod.Get())
+	c.ReaderTimeout = s.config.BackendRecvTimeout.Duration()
+	c.WriterTimeout = s.config.BackendSendTimeout.Duration()
+	c.SetKeepAlivePeriod(s.config.BackendKeepAlivePeriod.Duration())
 	return c, nil
 }
 

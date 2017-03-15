@@ -85,11 +85,11 @@ func OpFails() int64 {
 }
 
 func OpWriteSucc() int64 {
-	return cmdstats.wsucc.Get()
+	return cmdstats.wsucc.Int64()
 }
 
 func OpWriteFail() int64 {
-	return cmdstats.wfail.Get()
+	return cmdstats.wfail.Int64()
 }
 
 func OpRedisErrors() int64 {
