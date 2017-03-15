@@ -18,14 +18,29 @@ import (
 
 var ErrLookupItfAddr = errors.New("Lookup Interface Addr Failed")
 
+func GetLocalIp(itflist string) (string, error) {
+	itfs := strings.Split(itflist, "|")
+	for i, itf := range itfs {
+		ip, err := LookupItfAddr(itf)
+		if err == nil {
+			return ip, nil
+		} else if err != nil && i == len(itfs)-1 {
+			return "", err
+		}
+	}
+	return "", ErrLookupItfAddr
+}
+
 func LookupItfAddr(name string) (string, error) {
 	ift, err := net.InterfaceByName(name)
 	if err != nil {
-		log.Warnf("get interface addr by name fail,%v\n", ift)
+		log.Warnf("get interface addr by name %s fail,%v\n", name, ift)
+		return "", ErrLookupItfAddr
 	} else {
 		addr, err := ift.Addrs()
-		if err != nil || len(addr) < 2 {
-			log.Warnf("get %s addr fail,%s\n", name, err)
+		if err != nil || len(addr) < 1 {
+			log.Warnf("addr is %v,get %s addr fail,%s\n", addr, name, err)
+			return "", ErrLookupItfAddr
 		} else {
 			localIp := (strings.Split(addr[0].String(), "/"))[0]
 			log.Warnf("interface name:%s,addr is:%s\n", name, localIp)

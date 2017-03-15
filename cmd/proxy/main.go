@@ -161,9 +161,9 @@ Options:
 			log.PanicErrorf(err, "create '%s' client to '%s' failed", coordinator.name, coordinator.addr)
 		}
 		defer client.Close()
-		localIp, err := utils.LookupItfAddr(config.BindItf)
+		localIp, err := utils.GetLocalIp(config.BindItf)
 		if err != nil {
-			log.PanicErrorf(err, "lookup itf addr failed")
+			log.PanicErrorf(err, "interface is %s,get local ip failed", config.BindItf)
 		}
 		config.ProxyAddr = localIp + ":" + strconv.Itoa(config.ProxyPort)
 		store := models.NewStore(client, "__config__")

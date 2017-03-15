@@ -95,9 +95,9 @@ Options:
 	defer client.Close()
 
 	if config.ProductFrom == "coordinator" {
-		localIp, err := utils.LookupItfAddr(config.BindItf)
+		localIp, err := utils.GetLocalIp(config.BindItf)
 		if err != nil {
-			log.PanicErrorf(err, "lookup itf addr failed")
+			log.PanicErrorf(err, "interface is %s,get local ip failed", config.BindItf)
 		}
 		config.AdminAddr = localIp + ":" + strconv.Itoa(config.AdminPort)
 		store := models.NewStore(client, "__config__")

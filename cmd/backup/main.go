@@ -68,10 +68,9 @@ Options:
 		}
 
 	}
-
-	localIp, err := utils.LookupItfAddr(config.BindItf)
+	localIp, err := utils.GetLocalIp(config.BindItf)
 	if err != nil {
-		log.PanicErrorf(err, "lookup itf addr failed")
+		log.PanicErrorf(err, "interface is %s,get local ip failed", config.BindItf)
 	}
 	config.BackupAddr = localIp + ":" + strconv.Itoa(config.BackupPort)
 	config.AdminAddr = localIp + ":" + strconv.Itoa(config.AdminPort)
