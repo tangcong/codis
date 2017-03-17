@@ -32,11 +32,14 @@ bind_itf = "eth0"
 # Set bind address for admin(rpc), tcp only.
 admin_addr = "0.0.0.0:11080"
 proxy_port = 19000 
+admin_port = 11080
 
 # Set bind address for proxy, proto_type can be "tcp", "tcp4", "tcp6", "unix" or "unixpacket".
 proto_type = "tcp4"
 proxy_addr = "0.0.0.0:19000"
 backup_addr = "0.0.0.0:20000"
+
+close_backup = false
 
 # Set jodis address & session timeout, only accept "zookeeper" & "etcd".
 jodis_name = ""
@@ -112,6 +115,9 @@ metrics_report_influxdb_period = "1s"
 metrics_report_influxdb_username = ""
 metrics_report_influxdb_password = ""
 metrics_report_influxdb_database = ""
+
+write_req_bufsize = 10240
+backup_max_req = 256
 `
 
 type Config struct {
@@ -120,10 +126,12 @@ type Config struct {
 	BackupAddr string `toml:"backup_addr" json:"backup_addr"`
 	AdminAddr  string `toml:"admin_addr" json:"admin_addr"`
 	ProxyPort  int    `toml:"proxy_port" json:"proxy_port"`
+	AdminPort  int    `toml:"admin_port" json:"admin_port"`
 
-	BindItf   string `toml:"bind_itf" json:"bind_itf"`
-	HostProxy string `toml:"-" json:"-"`
-	HostAdmin string `toml:"-" json:"-"`
+	BindItf     string `toml:"bind_itf" json:"bind_itf"`
+	CloseBackup bool   `toml:"close_backup" json:"close_backup"`
+	HostProxy   string `toml:"-" json:"-"`
+	HostAdmin   string `toml:"-" json:"-"`
 
 	JodisName       string            `toml:"jodis_name" json:"jodis_name"`
 	JodisAddr       string            `toml:"jodis_addr" json:"jodis_addr"`
@@ -166,6 +174,9 @@ type Config struct {
 	MetricsReportInfluxdbUsername string            `toml:"metrics_report_influxdb_username" json:"metrics_report_influxdb_username"`
 	MetricsReportInfluxdbPassword string            `toml:"metrics_report_influxdb_password" json:"-"`
 	MetricsReportInfluxdbDatabase string            `toml:"metrics_report_influxdb_database" json:"metrics_report_influxdb_database"`
+
+	WriteReqBufsize int `toml:"write_req_bufsize" json:"write_req_bufsize"`
+	BackupMaxReq    int `toml:"backup_max_req" json:"backup_max_req"`
 }
 
 func NewDefaultConfig() *Config {

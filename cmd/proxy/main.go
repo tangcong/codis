@@ -166,6 +166,7 @@ Options:
 			log.PanicErrorf(err, "interface is %s,get local ip failed", config.BindItf)
 		}
 		config.ProxyAddr = localIp + ":" + strconv.Itoa(config.ProxyPort)
+		config.AdminAddr = localIp + ":" + strconv.Itoa(config.AdminPort)
 		store := models.NewStore(client, "__config__")
 		cluster, err := store.LoadProxyProduct(config.ProxyAddr, true)
 		if err != nil {

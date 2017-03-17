@@ -16,11 +16,14 @@ bind_itf = "eth0"
 # Set bind address for admin(rpc), tcp only.
 admin_addr = "0.0.0.0:11080"
 proxy_port = 19000 
+admin_port = 11080
 
 # Set bind address for proxy, proto_type can be "tcp", "tcp4", "tcp6", "unix" or "unixpacket".
 proto_type = "tcp4"
 proxy_addr = "0.0.0.0:19000"
 backup_addr = "0.0.0.0:20000"
+
+close_backup = false
 
 # Set jodis address & session timeout, only accept "zookeeper" & "etcd".
 jodis_name = ""
@@ -96,4 +99,7 @@ metrics_report_influxdb_period = "1s"
 metrics_report_influxdb_username = ""
 metrics_report_influxdb_password = ""
 metrics_report_influxdb_database = ""
+
+write_req_bufsize = 10240
+backup_max_req = 256
 

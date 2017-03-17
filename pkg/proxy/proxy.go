@@ -90,8 +90,8 @@ func New(config *Config) (*Proxy, error) {
 		s.model.Sys = strings.TrimSpace(string(b))
 	}
 	s.model.Hostname = utils.Hostname
-	s.cmds = make(chan *Request, 10240)
-	s.rsps = make(chan *backup.WriteRequest, 10240)
+	s.cmds = make(chan *Request, s.config.WriteReqBufsize)
+	s.rsps = make(chan *backup.WriteRequest, s.config.WriteReqBufsize)
 	s.req = &backup.WriteRequest{}
 	s.encoder = nil
 	s.conn = nil
@@ -107,7 +107,9 @@ func New(config *Config) (*Proxy, error) {
 
 	go s.serveAdmin()
 	go s.serveProxy()
-	go s.backupLoopWriter()
+	if !s.config.CloseBackup {
+		go s.backupLoopWriter()
+	}
 
 	s.startMetricsJson()
 	s.startMetricsInfluxdb()
@@ -691,7 +693,7 @@ func (s *Proxy) backupLoopWriter() {
 }
 
 func (s *Proxy) pushCmd(cmd *Request) error {
-	if n := len(s.req.MultiCmd); n >= 256 {
+	if n := len(s.req.MultiCmd); n >= s.config.BackupMaxReq {
 		incrOpWriteFail(1)
 		return ErrCmdBlock
 	}
@@ -705,7 +707,7 @@ func (s *Proxy) pushCmd(cmd *Request) error {
 		}
 	}
 	s.req.MultiCmd = append(s.req.MultiCmd, buf)
-	if len(s.req.MultiCmd) >= 256 {
+	if len(s.req.MultiCmd) >= s.config.BackupMaxReq {
 		return s.sendCmds()
 	}
 	return nil
@@ -729,7 +731,7 @@ func (s *Proxy) sendCmds() error {
 		if s.encoder == nil {
 			s.encoder = s.conn.FlushEncoder()
 			s.encoder.MaxInterval = time.Millisecond
-			s.encoder.MaxBuffered = math2.MinInt(256, cap(s.cmds))
+			s.encoder.MaxBuffered = math2.MinInt(s.config.BackupMaxReq, cap(s.cmds))
 		}
 		if err := s.encoder.EncodeReq(s.req); err != nil {
 			log.WarnErrorf(err, "backup conn failure, %p", s)
@@ -746,7 +748,7 @@ func (s *Proxy) sendCmds() error {
 		err = nil
 		break
 	}
-	if err == nil && len(s.rsps) < 10240 {
+	if err == nil && len(s.rsps) < s.config.WriteReqBufsize {
 		s.rsps <- s.req
 		s.req = &backup.WriteRequest{}
 	} else {

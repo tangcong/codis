@@ -219,13 +219,13 @@ func (s *Session) loopWriter(tasks <-chan *Request) (err error) {
 			return s.incrOpFails(r, err)
 		} else {
 			s.incrOpStats(r, resp.Type)
-			if !resp.IsError() {
+			if !s.config.CloseBackup && !resp.IsError() {
 				_, flag, err := getOpInfo(r.Multi)
 				if err != nil {
 					return err
 				}
 				if flag == FlagWrite {
-					if len(s.reqs) >= 10240 {
+					if len(s.reqs) >= s.config.WriteReqBufsize {
 						s.incrWriteOpFails(r, err)
 					} else {
 						s.reqs <- r

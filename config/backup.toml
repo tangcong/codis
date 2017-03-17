@@ -16,7 +16,7 @@ proto_type = "tcp4"
 backup_addr = "0.0.0.0:20000"
 
 # Set backup server port
-backup_port = 20000
+backup_port = 20001
 admin_port = 11081 
 
 # Set data file dir 
