@@ -4,10 +4,12 @@ package backup;
 
 message WriteRequest {
     required string productName = 1;
-    repeated string multiCmd = 2;
+    required bytes multiCmd = 2;
     optional int64  updateTime = 3;
     optional uint64 masterOffset = 4;
     optional uint64 slaveOffset = 5;
+    optional int32  usedIndex = 6;
+    optional int32  cmds = 7;
 }
 
 message WriteResponse {

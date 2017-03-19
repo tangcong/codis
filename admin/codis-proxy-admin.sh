@@ -33,7 +33,7 @@ start)
          exit 0
       fi
     fi
-    nohup "$CODIS_PROXY_BIN" "--config=${CODIS_PROXY_CONF_FILE}" "--zookeeper=$COORDINATOR_ADDR" \
+    nohup "$CODIS_PROXY_BIN" "--config=${CODIS_PROXY_CONF_FILE}" "--debug=1" "--cpuprofile=profile.cpu" "--memprofile=profile.mem" "--zookeeper=$COORDINATOR_ADDR" \
     "--log=$CODIS_PROXY_LOG_FILE" "--log-level=INFO" "--ncpu=4" "--pidfile=$CODIS_PROXY_PID_FILE" > "$CODIS_PROXY_DAEMON_FILE" 2>&1 < /dev/null & 
     ;;
 start-foreground)

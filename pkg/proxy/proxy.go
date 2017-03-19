@@ -25,6 +25,7 @@ import (
 	"github.com/CodisLabs/codis/pkg/utils/redis"
 	"github.com/CodisLabs/codis/pkg/utils/rpc"
 	"github.com/CodisLabs/codis/pkg/utils/unsafe2"
+	"github.com/golang/protobuf/proto"
 )
 
 type Proxy struct {
@@ -47,11 +48,15 @@ type Proxy struct {
 	lproxy net.Listener
 	ladmin net.Listener
 
-	cmds    chan *Request
-	rsps    chan *backup.WriteRequest
-	req     *backup.WriteRequest
-	encoder *backup.FlushEncoder
-	conn    *backup.Conn
+	cmds       chan *Request
+	rsps       chan int32
+	req        *backup.WriteRequest
+	encoder    *backup.FlushEncoder
+	conn       *backup.Conn
+	cmdBuf     []byte
+	cmdBufsize int
+	curCmds    *int32
+	usedIndex  *int32
 
 	ha struct {
 		monitor *redis.Sentinel
@@ -75,7 +80,7 @@ func New(config *Config) (*Proxy, error) {
 	s.config = config
 	s.exit.C = make(chan struct{})
 	s.router = NewRouter(config)
-	s.ignore = make([]byte, config.ProxyHeapPlaceholder.Int64())
+	//s.ignore = make([]byte, config.ProxyHeapPlaceholder.Int64())
 
 	s.model = &models.Proxy{
 		StartTime: time.Now().String(),
@@ -91,10 +96,14 @@ func New(config *Config) (*Proxy, error) {
 	}
 	s.model.Hostname = utils.Hostname
 	s.cmds = make(chan *Request, s.config.WriteReqBufsize)
-	s.rsps = make(chan *backup.WriteRequest, s.config.WriteReqBufsize)
-	s.req = &backup.WriteRequest{}
+	s.rsps = make(chan int32, s.config.WriteReqBufsize)
+	s.req = &backup.WriteRequest{ProductName: &s.config.ProductName}
+	s.cmdBufsize = s.config.BackupMaxReq * s.config.RedisBufsize.AsInt()
+	s.cmdBuf = make([]byte, s.cmdBufsize)
 	s.encoder = nil
 	s.conn = nil
+	s.curCmds = proto.Int32(0)
+	s.usedIndex = proto.Int32(0)
 
 	if err := s.setup(config); err != nil {
 		s.Close()
@@ -676,7 +685,6 @@ func (s *Proxy) backupLoopWriter() {
 		defer s.Close()
 		select {
 		case <-tick:
-			fmt.Println("tick.")
 			err := s.sendCmds()
 			if err != nil {
 				log.Warnf("send cmd failed,may lost messages!")
@@ -693,30 +701,36 @@ func (s *Proxy) backupLoopWriter() {
 }
 
 func (s *Proxy) pushCmd(cmd *Request) error {
-	if n := len(s.req.MultiCmd); n >= s.config.BackupMaxReq {
+	cmds := int(s.req.GetCmds())
+	index := int(s.req.GetUsedIndex())
+	if cmds >= s.config.BackupMaxReq {
 		incrOpWriteFail(1)
 		return ErrCmdBlock
 	}
-	s.req.ProductName = &s.config.ProductName
-	var buf string
 	for i, argv := range cmd.Multi {
 		if i > 0 {
-			buf += string("\n") + string(argv.Value)
-		} else {
-			buf = string(argv.Value)
+			s.cmdBuf[index] = '\n'
+			index += 1
 		}
+		index += copy(s.cmdBuf[index:], argv.Value)
 	}
-	s.req.MultiCmd = append(s.req.MultiCmd, buf)
-	if len(s.req.MultiCmd) >= s.config.BackupMaxReq {
+	*s.curCmds = int32(cmds + 1)
+	*s.usedIndex = int32(index)
+	s.req.Cmds = s.curCmds
+	s.req.UsedIndex = s.usedIndex
+	if cmds >= s.config.BackupMaxReq {
 		return s.sendCmds()
 	}
 	return nil
 }
 
 func (s *Proxy) sendCmds() error {
-	if n := len(s.req.MultiCmd); n == 0 {
+	index := s.req.GetUsedIndex()
+	cmds := s.req.GetCmds()
+	if cmds == 0 || index == 0 {
 		return nil
 	}
+	s.req.MultiCmd = s.cmdBuf[:index]
 	err := ErrSendCmdFail
 	for i := 0; i < 3; i++ {
 		if s.conn == nil {
@@ -749,21 +763,22 @@ func (s *Proxy) sendCmds() error {
 		break
 	}
 	if err == nil && len(s.rsps) < s.config.WriteReqBufsize {
-		s.rsps <- s.req
-		s.req = &backup.WriteRequest{}
+		s.rsps <- cmds
+		s.req.UsedIndex = proto.Int32(0)
+		s.req.Cmds = proto.Int32(0)
 	} else {
-		incrOpWriteFail(int64(len(s.req.MultiCmd)))
+		incrOpWriteFail(int64(cmds))
 	}
 	return err
 }
 
 func (s *Proxy) backupLoopReader(c *backup.Conn) {
 
-	for r := range s.rsps {
+	for cmds := range s.rsps {
 		if c != nil {
 			if resp, err := c.DecodeRes(); err != nil {
-				incrOpWriteFail(int64(len(r.MultiCmd)))
-				log.WarnErrorf(err, "product = %s, commands = %d,status = %d,decode failure, %s\n", r.GetProductName(), len(r.MultiCmd), err)
+				incrOpWriteFail(int64(cmds))
+				log.WarnErrorf(err, "commands = %d,status = %d,decode failure, %s\n", cmds, err)
 				return
 			} else {
 				//log.Warnf("product = %s, command num = %d,status = %d\n", r.Req.GetProductName(), resp.Res.GetCmds(), resp.Res.GetStatus())

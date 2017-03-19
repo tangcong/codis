@@ -37,7 +37,7 @@ admin_port = 11080
 # Set bind address for proxy, proto_type can be "tcp", "tcp4", "tcp6", "unix" or "unixpacket".
 proto_type = "tcp4"
 proxy_addr = "0.0.0.0:19000"
-backup_addr = "0.0.0.0:20000"
+backup_addr = "0.0.0.0:20001"
 
 close_backup = false
 
@@ -117,7 +117,8 @@ metrics_report_influxdb_password = ""
 metrics_report_influxdb_database = ""
 
 write_req_bufsize = 10240
-backup_max_req = 256
+backup_max_req = 1024 
+redis_bufsize = 8192
 `
 
 type Config struct {
@@ -159,6 +160,7 @@ type Config struct {
 	BackendKeepAlivePeriod timesize.Duration `toml:"backend_keepalive_period" json:"backend_keepalive_period"`
 	BackendNumberDatabases int32             `toml:"backend_number_databases" json:"backend_number_databases"`
 
+	RedisBufsize           bytesize.Int64    `toml:"redis_bufsize" json:"redis_bufsize"`
 	SessionRecvBufsize     bytesize.Int64    `toml:"session_recv_bufsize" json:"session_recv_bufsize"`
 	SessionRecvTimeout     timesize.Duration `toml:"session_recv_timeout" json:"session_recv_timeout"`
 	SessionSendBufsize     bytesize.Int64    `toml:"session_send_bufsize" json:"session_send_bufsize"`

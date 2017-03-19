@@ -25,12 +25,13 @@ import (
 	"github.com/CodisLabs/codis/pkg/topom"
 	"github.com/CodisLabs/codis/pkg/utils"
 	"github.com/CodisLabs/codis/pkg/utils/log"
+	"runtime/pprof"
 )
 
 func main() {
 	const usage = `
 Usage:
-	codis-proxy [--ncpu=N [--max-ncpu=MAX]] [--config=CONF] [--log=FILE] [--log-level=LEVEL] [--host-admin=ADDR] [--host-proxy=ADDR] [--dashboard=ADDR|--zookeeper=ADDR|--etcd=ADDR|--filesystem=ROOT|--db=ADDR|--fillslots=FILE] [--ulimit=NLIMIT] [--pidfile=FILE]
+	codis-proxy [--ncpu=N [--max-ncpu=MAX]] [--config=CONF] [--debug=0/1] [--cpuprofile=FILE] [--memprofile=FILE] [--log=FILE] [--log-level=LEVEL] [--host-admin=ADDR] [--host-proxy=ADDR] [--dashboard=ADDR|--zookeeper=ADDR|--etcd=ADDR|--filesystem=ROOT|--db=ADDR|--fillslots=FILE] [--ulimit=NLIMIT] [--pidfile=FILE]
 	codis-proxy  --default-config
 	codis-proxy  --version
 
@@ -45,6 +46,18 @@ Options:
 	d, err := docopt.Parse(usage, nil, true, "", false)
 	if err != nil {
 		log.PanicError(err, "parse arguments failed")
+	}
+
+	if debug, ok := utils.ArgumentInteger(d, "--debug"); ok && debug == 1 {
+		if cpuprofile, ok := utils.Argument(d, "--cpuprofile"); ok {
+			runtime.MemProfileRate = 1
+			f, err := os.Create(cpuprofile)
+			if err != nil {
+				log.PanicError(err)
+			}
+			pprof.StartCPUProfile(f)
+			defer pprof.StopCPUProfile()
+		}
 	}
 
 	switch {
@@ -240,6 +253,18 @@ Options:
 
 	for !s.IsClosed() {
 		time.Sleep(time.Second)
+	}
+
+	if debug, ok := utils.ArgumentInteger(d, "--debug"); ok && debug == 1 {
+		if memprofile, ok := utils.Argument(d, "--memprofile"); ok {
+			f, err := os.Create(memprofile)
+			if err != nil {
+				log.PanicError(err)
+			}
+			//runtime.GC()
+			pprof.WriteHeapProfile(f)
+			f.Close()
+		}
 	}
 
 	log.Warnf("[%p] proxy is exiting ...", s)

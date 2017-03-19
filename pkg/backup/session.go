@@ -137,14 +137,12 @@ func (s *Session) loopReader() (err error) {
 				s.mwriter[*r.ProductName] = writer
 			}
 		}
-		fmt.Fprintf(writer, "%d\t%d\n", time.Now().Unix(), len(r.MultiCmd))
-		var buf string
-		for _, cmd := range r.MultiCmd {
-			buf += cmd
-		}
-		fmt.Fprintf(writer, "%s\n", buf)
+		index := int(r.GetUsedIndex())
+		cmds := int(r.GetCmds())
+		fmt.Fprintf(writer, "%d\t%d\n", time.Now().Unix(), r.GetCmds())
+		fmt.Fprintf(writer, "%s\n", r.MultiCmd[:index])
 		s.handleResponse(r)
-		incrOpWriteSucc(int64(len(r.MultiCmd)))
+		incrOpWriteSucc(int64(cmds))
 	}
 	return nil
 }
@@ -156,7 +154,7 @@ func (s *Session) handleQuit(r *WriteRequest) error {
 
 func (s *Session) handleResponse(r *WriteRequest) error {
 	rsp := &WriteResponse{}
-	rsp.Cmds = proto.Int32(int32(len(r.MultiCmd)))
+	rsp.Cmds = proto.Int32(r.GetCmds())
 	rsp.Status = WriteResponse_WritingStatus(WriteResponse_OK).Enum()
 	p := s.Conn.FlushEncoder()
 	p.MaxInterval = time.Millisecond
