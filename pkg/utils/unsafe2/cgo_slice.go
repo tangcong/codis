@@ -43,6 +43,10 @@ func newCGoSlice(n int, force bool) Slice {
 	return s
 }
 
+func (s *cgoSlice) Type() string {
+	return "cgo_slice"
+}
+
 func (s *cgoSlice) Buffer() []byte {
 	return s.buf
 }
@@ -56,4 +60,16 @@ func (s *cgoSlice) reclaim() {
 	s.ptr = nil
 	s.buf = nil
 	runtime.SetFinalizer(s, nil)
+}
+
+func (s *cgoSlice) Slice2(beg, end int) Slice {
+	return newGoSliceFrom(s, s.Buffer()[beg:end])
+}
+
+func (s *cgoSlice) Slice3(beg, end, cap int) Slice {
+	return newGoSliceFrom(s, s.Buffer()[beg:end:cap])
+}
+
+func (s *cgoSlice) Parent() Slice {
+	return nil
 }

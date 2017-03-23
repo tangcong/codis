@@ -192,7 +192,8 @@ function renderSlotsCharts(slots_array) {
             },
         },
         legend: {
-            enabled: true
+            enabled: true,
+            itemWidth: 140,
         },
         plotOptions: {
             columnrange: {

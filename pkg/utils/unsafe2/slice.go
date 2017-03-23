@@ -6,8 +6,14 @@ package unsafe2
 import "github.com/CodisLabs/codis/pkg/utils/sync2/atomic2"
 
 type Slice interface {
+	Type() string
+
 	Buffer() []byte
 	reclaim()
+
+	Slice2(beg, end int) Slice
+	Slice3(beg, end, cap int) Slice
+	Parent() Slice
 }
 
 var maxOffheapBytes atomic2.Int64

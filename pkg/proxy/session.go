@@ -15,7 +15,6 @@ import (
 	"github.com/CodisLabs/codis/pkg/proxy/redis"
 	"github.com/CodisLabs/codis/pkg/utils/errors"
 	"github.com/CodisLabs/codis/pkg/utils/log"
-	"github.com/CodisLabs/codis/pkg/utils/math2"
 	"github.com/CodisLabs/codis/pkg/utils/sync2/atomic2"
 )
 
@@ -106,9 +105,8 @@ func (s *Session) CloseWithError(err error) error {
 }
 
 var (
-	ErrTooManySessions = errors.New("too many sessions")
-	ErrRouterNotOnline = errors.New("router is not online")
-
+	ErrRouterNotOnline          = errors.New("router is not online")
+	ErrTooManySessions          = errors.New("too many sessions")
 	ErrTooManyPipelinedRequests = errors.New("too many pipelined requests")
 )
 
@@ -134,7 +132,7 @@ func (s *Session) Start(d *Router) {
 			return
 		}
 
-		tasks := make(chan *Request, math2.MaxInt(1, s.config.SessionMaxPipeline))
+		tasks := NewRequestChanBuffer(1024)
 
 		go func() {
 			s.loopWriter(tasks)
@@ -143,17 +141,20 @@ func (s *Session) Start(d *Router) {
 
 		go func() {
 			s.loopReader(tasks, d)
-			close(tasks)
+			tasks.Close()
 		}()
 	})
 }
 
-func (s *Session) loopReader(tasks chan<- *Request, d *Router) (err error) {
+func (s *Session) loopReader(tasks *RequestChan, d *Router) (err error) {
 	defer func() {
 		s.CloseReaderWithError(err)
 	}()
 
-	var sensitive = s.config.SessionBreakOnFailure
+	var (
+		breakOnFailure = s.config.SessionBreakOnFailure
+		maxPipelineLen = s.config.SessionMaxPipeline
+	)
 
 	for !s.quit {
 		multi, err := s.Conn.DecodeMultiBulk()
@@ -161,6 +162,10 @@ func (s *Session) loopReader(tasks chan<- *Request, d *Router) (err error) {
 			return err
 		}
 		s.incrOpTotal()
+
+		if tasks.Buffered() > maxPipelineLen {
+			return ErrTooManyPipelinedRequests
+		}
 
 		start := time.Now()
 		s.LastOpUnix = start.Unix()
@@ -172,42 +177,39 @@ func (s *Session) loopReader(tasks chan<- *Request, d *Router) (err error) {
 		r.Database = s.database
 		r.UnixNano = start.UnixNano()
 
-		if len(tasks) == cap(tasks) {
-			return ErrTooManyPipelinedRequests
-		}
 		if err := s.handleRequest(r, d); err != nil {
 			r.Resp = redis.NewErrorf("ERR handle request, %s", err)
-			tasks <- r
-			if sensitive {
+			tasks.PushBack(r)
+			if breakOnFailure {
 				return err
 			}
 		} else {
-			tasks <- r
+			tasks.PushBack(r)
 		}
 	}
 	return nil
 }
 
-func (s *Session) loopWriter(tasks <-chan *Request) (err error) {
+func (s *Session) loopWriter(tasks *RequestChan) (err error) {
 	defer func() {
 		s.CloseWithError(err)
-		for r := range tasks {
+		tasks.PopFrontAllVoid(func(r *Request) {
 			s.incrOpFails(r, nil)
-		}
+		})
 		s.flushOpStats(true)
 	}()
 
-	var sensitive = s.config.SessionBreakOnFailure
+	var breakOnFailure = s.config.SessionBreakOnFailure
 
 	p := s.Conn.FlushEncoder()
 	p.MaxInterval = time.Millisecond
 	p.MaxBuffered = 256
 
-	for r := range tasks {
+	return tasks.PopFrontAll(func(r *Request) error {
 		resp, err := s.handleResponse(r)
 		if err != nil {
 			resp = redis.NewErrorf("ERR handle response, %s", err)
-			if sensitive {
+			if breakOnFailure {
 				s.Conn.Encode(resp, true)
 				return s.incrOpFails(r, err)
 			}
@@ -215,7 +217,8 @@ func (s *Session) loopWriter(tasks <-chan *Request) (err error) {
 		if err := p.Encode(resp); err != nil {
 			return s.incrOpFails(r, err)
 		}
-		if err := p.Flush(len(tasks) == 0); err != nil {
+		fflush := tasks.IsEmpty()
+		if err := p.Flush(fflush); err != nil {
 			return s.incrOpFails(r, err)
 		} else {
 			s.incrOpStats(r, resp.Type)
@@ -234,11 +237,11 @@ func (s *Session) loopWriter(tasks <-chan *Request) (err error) {
 				}
 			}
 		}
-		if len(tasks) == 0 {
+		if fflush {
 			s.flushOpStats(false)
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 func (s *Session) handleResponse(r *Request) (*redis.Resp, error) {
