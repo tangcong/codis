@@ -45,6 +45,8 @@ func (t *cmdAdmin) Main(d map[string]interface{}) {
 		t.handleDelProxy(d)
 	case d["--del-backup"].(bool):
 		t.handleDelBackup(d)
+	case d["--query-product"].(bool):
+		t.handleQueryProduct(d)
 	}
 }
 
@@ -458,7 +460,7 @@ func (t *cmdAdmin) handleSetProduct(d map[string]interface{}) {
 	value, err := json.MarshalIndent(&cluster, "", " ")
 	err = client.Update(models.DashboardProductPath("__config__", cluster.DashboardAddr), value)
 	if err != nil {
-		log.PanicErrorf(err, "add products failed")
+		log.PanicErrorf(err, "set products failed")
 	}
 	log.Warnf("set product end!")
 }
@@ -477,7 +479,7 @@ func (t *cmdAdmin) handleSetProxy(d map[string]interface{}) {
 	value, err := json.MarshalIndent(&cluster, "", " ")
 	err = client.Update(models.ProxyProductPath("__config__", utils.ArgumentMust(d, "--proxy-addr")), value)
 	if err != nil {
-		log.PanicErrorf(err, "add proxy failed")
+		log.PanicErrorf(err, "set proxy failed")
 	}
 	log.Warnf("set proxy end!")
 }
@@ -496,7 +498,7 @@ func (t *cmdAdmin) handleSetBackup(d map[string]interface{}) {
 	value, err := json.MarshalIndent(&cluster, "", " ")
 	err = client.Update(models.BackupProductPath("__config__", utils.ArgumentMust(d, "--backup-addr")), value)
 	if err != nil {
-		log.PanicErrorf(err, "add backup failed")
+		log.PanicErrorf(err, "set backup failed")
 	}
 	log.Warnf("set backup end!")
 }
@@ -535,4 +537,30 @@ func (t *cmdAdmin) handleDelProduct(d map[string]interface{}) {
 		log.PanicErrorf(err, "del product failed")
 	}
 	log.Warnf("del product end!")
+}
+
+func (t *cmdAdmin) handleQueryProduct(d map[string]interface{}) {
+	log.Warnf("query product start!")
+	client := t.newTopomClient(d)
+	defer client.Close()
+	var value []byte
+	var err error
+	if addr, ok := utils.Argument(d, "--proxy-addr"); ok {
+		value, err = client.Read(models.ProxyProductPath("__config__", addr), true)
+		log.Warnf("query proxy,err is %s\n", err)
+	} else if addr, ok := utils.Argument(d, "--dashboard-addr"); ok {
+		value, err = client.Read(models.DashboardProductPath("__config__", addr), true)
+		log.Warnf("query dashboard,err is %s\n", err)
+	} else if addr, ok := utils.Argument(d, "--backup-addr"); ok {
+		value, err = client.Read(models.BackupProductPath("__config__", addr), true)
+		log.Warnf("query backup,err is %s\n", err)
+	} else {
+		log.Panicf("input argv error!\n")
+	}
+	config := &models.ClusterConfig{}
+	if err = json.Unmarshal(value, config); err != nil {
+		log.PanicErrorf(err, "decode json failed")
+	}
+	log.Warnf("config is->%+v\n", config)
+	log.Warnf("query product end!")
 }
