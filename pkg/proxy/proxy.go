@@ -18,6 +18,7 @@ import (
 
 	"github.com/CodisLabs/codis/pkg/backup"
 	"github.com/CodisLabs/codis/pkg/models"
+	redisapi "github.com/CodisLabs/codis/pkg/proxy/redis"
 	"github.com/CodisLabs/codis/pkg/utils"
 	"github.com/CodisLabs/codis/pkg/utils/errors"
 	"github.com/CodisLabs/codis/pkg/utils/log"
@@ -48,15 +49,15 @@ type Proxy struct {
 	lproxy net.Listener
 	ladmin net.Listener
 
-	cmds       chan *Request
-	rsps       chan int32
-	req        *backup.WriteRequest
-	encoder    *backup.FlushEncoder
-	conn       *backup.Conn
-	cmdBuf     []byte
-	cmdBufsize int
-	curCmds    *int32
-	usedIndex  *int32
+	cmds           chan *Request
+	rsps           chan int32
+	req            *backup.WriteRequest
+	encoder        *backup.FlushEncoder
+	conn           *backup.Conn
+	cmdBufsize     int
+	curCmdNum      *int32
+	curUsedIndex   *int32
+	requestEncoder *redisapi.Encoder
 
 	ha struct {
 		monitor *redis.Sentinel
@@ -99,11 +100,11 @@ func New(config *Config) (*Proxy, error) {
 	s.rsps = make(chan int32, s.config.WriteReqBufsize)
 	s.req = &backup.WriteRequest{ProductName: &s.config.ProductName}
 	s.cmdBufsize = s.config.BackupMaxReq * s.config.RedisBufsize.AsInt()
-	s.cmdBuf = make([]byte, s.cmdBufsize)
 	s.encoder = nil
 	s.conn = nil
-	s.curCmds = proto.Int32(0)
-	s.usedIndex = proto.Int32(0)
+	s.curCmdNum = proto.Int32(0)
+	s.curUsedIndex = proto.Int32(0)
+	s.requestEncoder = redisapi.NewEncoderSize(s, s.cmdBufsize)
 
 	if err := s.setup(config); err != nil {
 		s.Close()
@@ -686,7 +687,7 @@ func (s *Proxy) backupLoopWriter() {
 		defer s.Close()
 		select {
 		case <-tick:
-			err := s.sendCmds()
+			err := s.requestEncoder.Flush()
 			if err != nil {
 				log.Warnf("send cmd failed,may lost messages!")
 			}
@@ -701,26 +702,30 @@ func (s *Proxy) backupLoopWriter() {
 	}
 }
 
+func (s *Proxy) Write(buf []byte) (int, error) {
+	*s.curUsedIndex = int32(len(buf))
+	s.req.UsedIndex = s.curUsedIndex
+	s.req.MultiCmd = buf
+	err := s.sendCmds()
+	if err == nil {
+		return len(buf), nil
+	} else {
+		return 0, ErrSendCmdFail
+	}
+}
+
 func (s *Proxy) pushCmd(cmd *Request) error {
 	cmds := int(s.req.GetCmds())
-	index := int(s.req.GetUsedIndex())
 	if cmds >= s.config.BackupMaxReq {
 		incrOpWriteFail(1)
 		return ErrCmdBlock
 	}
-	for i, argv := range cmd.Multi {
-		if i > 0 {
-			s.cmdBuf[index] = '\n'
-			index += 1
-		}
-		index += copy(s.cmdBuf[index:], argv.Value)
-	}
-	*s.curCmds = int32(cmds + 1)
-	*s.usedIndex = int32(index)
-	s.req.Cmds = s.curCmds
-	s.req.UsedIndex = s.usedIndex
+	s.requestEncoder.EncodeMultiBulk(cmd.Multi, false)
+	cmds++
+	*s.curCmdNum = int32(cmds)
+	s.req.Cmds = s.curCmdNum
 	if cmds >= s.config.BackupMaxReq {
-		return s.sendCmds()
+		s.requestEncoder.Flush()
 	}
 	return nil
 }
@@ -731,7 +736,6 @@ func (s *Proxy) sendCmds() error {
 	if cmds == 0 || index == 0 {
 		return nil
 	}
-	s.req.MultiCmd = s.cmdBuf[:index]
 	err := ErrSendCmdFail
 	for i := 0; i < 3; i++ {
 		if s.conn == nil {

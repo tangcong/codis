@@ -38,7 +38,6 @@ var (
 )
 
 func setBufsize(s int) {
-	log.Warnf("backup buf size is %d\n", s)
 	wBuf.bufsize = s
 	for i := 0; i < ArraySize; i++ {
 		wBuf.array[i] = make([]byte, wBuf.bufsize)
@@ -49,7 +48,6 @@ func setBufsize(s int) {
 func AppendBuf(buf []byte) error {
 	wBuf.Lock()
 	defer wBuf.Unlock()
-	log.Debugf("wbuf pos is %d,append buf size:%d\n", wBuf.pos, len(buf))
 	if wBuf.pos+len(buf) >= wBuf.bufsize {
 		return ErrBufFull
 	}
@@ -96,8 +94,7 @@ func AsyncFlushFile(config *Config) {
 			err = SwitchBuf()
 			if err == nil {
 				wBuf.lastFlushFileStamp = time.Now().Unix()
-				log.Debugf("wbuf index is %d,last pos is:%d\n", wBuf.lastIndex, wBuf.lastPos)
-				fmt.Fprintf(wBuf.writer, "%d\n%s\n", wBuf.lastFlushFileStamp, wBuf.array[wBuf.lastIndex&1][:wBuf.lastPos])
+				fmt.Fprintf(wBuf.writer, "%s", wBuf.array[wBuf.lastIndex&1][:wBuf.lastPos])
 			}
 		default:
 			time.Sleep(100 * time.Millisecond)
