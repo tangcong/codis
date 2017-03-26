@@ -33,14 +33,18 @@ func (t *cmdAdmin) Main(d map[string]interface{}) {
 		t.handleConfigRestore(d)
 	case d["--dashboard-list"].(bool):
 		t.handleDashboardList(d)
-	case d["--add-product"].(bool):
-		t.handleAddProduct(d)
-	case d["--add-proxy"].(bool):
-		t.handleAddProxy(d)
+	case d["--set-product"].(bool):
+		t.handleSetProduct(d)
+	case d["--set-proxy"].(bool):
+		t.handleSetProxy(d)
+	case d["--set-backup"].(bool):
+		t.handleSetBackup(d)
 	case d["--del-product"].(bool):
 		t.handleDelProduct(d)
 	case d["--del-proxy"].(bool):
 		t.handleDelProxy(d)
+	case d["--del-backup"].(bool):
+		t.handleDelBackup(d)
 	}
 }
 
@@ -440,8 +444,8 @@ func (t *cmdAdmin) handleDashboardList(d map[string]interface{}) {
 	}
 }
 
-func (t *cmdAdmin) handleAddProduct(d map[string]interface{}) {
-	log.Warnf("add product start!")
+func (t *cmdAdmin) handleSetProduct(d map[string]interface{}) {
+	log.Warnf("set product start!")
 	client := t.newTopomClient(d)
 	defer client.Close()
 
@@ -452,15 +456,15 @@ func (t *cmdAdmin) handleAddProduct(d map[string]interface{}) {
 	cluster.BackupAddr = utils.ArgumentMust(d, "--product-backup")
 
 	value, err := json.MarshalIndent(&cluster, "", " ")
-	err = client.Create(models.DashboardProductPath("__config__", cluster.DashboardAddr), value)
+	err = client.Update(models.DashboardProductPath("__config__", cluster.DashboardAddr), value)
 	if err != nil {
 		log.PanicErrorf(err, "add products failed")
 	}
-	log.Warnf("add product end!")
+	log.Warnf("set product end!")
 }
 
-func (t *cmdAdmin) handleAddProxy(d map[string]interface{}) {
-	log.Warnf("add proxy start!")
+func (t *cmdAdmin) handleSetProxy(d map[string]interface{}) {
+	log.Warnf("set proxy start!")
 	client := t.newTopomClient(d)
 	defer client.Close()
 
@@ -471,11 +475,30 @@ func (t *cmdAdmin) handleAddProxy(d map[string]interface{}) {
 	cluster.BackupAddr = utils.ArgumentMust(d, "--product-backup")
 
 	value, err := json.MarshalIndent(&cluster, "", " ")
-	err = client.Create(models.ProxyProductPath("__config__", utils.ArgumentMust(d, "--proxy-addr")), value)
+	err = client.Update(models.ProxyProductPath("__config__", utils.ArgumentMust(d, "--proxy-addr")), value)
 	if err != nil {
 		log.PanicErrorf(err, "add proxy failed")
 	}
-	log.Warnf("add proxy end!")
+	log.Warnf("set proxy end!")
+}
+
+func (t *cmdAdmin) handleSetBackup(d map[string]interface{}) {
+	log.Warnf("set backup start!")
+	client := t.newTopomClient(d)
+	defer client.Close()
+
+	cluster := models.ClusterConfig{}
+	cluster.ProductName = utils.ArgumentMust(d, "--product")
+	cluster.ProductAuth = utils.ArgumentMust(d, "--product-auth")
+	cluster.DashboardAddr = utils.ArgumentMust(d, "--product-dashboard")
+	cluster.BackupAddr = utils.ArgumentMust(d, "--product-backup")
+
+	value, err := json.MarshalIndent(&cluster, "", " ")
+	err = client.Update(models.BackupProductPath("__config__", utils.ArgumentMust(d, "--backup-addr")), value)
+	if err != nil {
+		log.PanicErrorf(err, "add backup failed")
+	}
+	log.Warnf("set backup end!")
 }
 
 func (t *cmdAdmin) handleDelProxy(d map[string]interface{}) {
@@ -488,6 +511,18 @@ func (t *cmdAdmin) handleDelProxy(d map[string]interface{}) {
 		log.PanicErrorf(err, "del proxy failed")
 	}
 	log.Warnf("del proxy end!")
+}
+
+func (t *cmdAdmin) handleDelBackup(d map[string]interface{}) {
+	log.Warnf("del backup start!")
+	client := t.newTopomClient(d)
+	defer client.Close()
+
+	err := client.Delete(models.BackupProductPath("__config__", utils.ArgumentMust(d, "--backup-addr")))
+	if err != nil {
+		log.PanicErrorf(err, "del backup failed")
+	}
+	log.Warnf("del backup end!")
 }
 
 func (t *cmdAdmin) handleDelProduct(d map[string]interface{}) {
