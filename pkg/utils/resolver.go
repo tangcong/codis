@@ -47,7 +47,6 @@ func LookupItfAddr(name string) (string, error) {
 			return localIp, nil
 		}
 	}
-	return "", ErrLookupItfAddr
 }
 
 func LookupIP(host string) []net.IP {

@@ -108,8 +108,8 @@ metrics_report_influxdb_password = ""
 metrics_report_influxdb_database = ""
 
 # Set backup server argv
-write_req_bufsize = 10240
-backup_max_req = 1024 
+write_req_bufsize = 20240
+backup_max_req = 20240 
 redis_bufsize = 8192
 
 # Set statsd server (such as localhost:8125), proxy will report metrics to statsd.

@@ -16,6 +16,8 @@ CODIS_BACKUP_DAEMON_FILE=$CODIS_LOG_DIR/codis-backup.out
 
 CODIS_BACKUP_CONF_FILE=$CODIS_CONF_DIR/backup.toml
 
+COORDINATOR_ADDR="127.0.0.1:2181"
+
 echo $CODIS_BACKUP_CONF_FILE
 
 if [ ! -d $CODIS_LOG_DIR ]; then
@@ -32,10 +34,10 @@ start)
          exit 0
       fi
     fi
-    nohup "$CODIS_BACKUP_BIN" "--config=${CODIS_BACKUP_CONF_FILE}" "--log=$CODIS_BACKUP_LOG_FILE" "--log-level=INFO" "--pidfile=$CODIS_BACKUP_PID_FILE" > "$CODIS_BACKUP_DAEMON_FILE" 2>&1 < /dev/null & 
+    nohup "$CODIS_BACKUP_BIN" "--config=${CODIS_BACKUP_CONF_FILE}" "--log=$CODIS_BACKUP_LOG_FILE" "--log-level=INFO" "--pidfile=$CODIS_BACKUP_PID_FILE" "--zookeeper=$COORDINATOR_ADDR" > "$CODIS_BACKUP_DAEMON_FILE" 2>&1 < /dev/null & 
     ;;
 start-foreground)
-    $CODIS_BACKUP_BIN "--config=${CODIS_BACKUP_CONF_FILE}" "--log-level=DEBUG" "--pidfile=$CODIS_BACKUP_PID_FILE"
+    $CODIS_BACKUP_BIN "--config=${CODIS_BACKUP_CONF_FILE}" "--log-level=DEBUG" "--pidfile=$CODIS_BACKUP_PID_FILE" "--zookeeper=$COORDINATOR_ADDR"
     ;;
 stop)
     echo "stopping codis-backup ... "

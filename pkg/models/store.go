@@ -66,6 +66,10 @@ func ProxyProductPath(product string, addr string) string {
 	return filepath.Join(CodisDir, product, "proxy", addr)
 }
 
+func BackupProductPath(product string, addr string) string {
+	return filepath.Join(CodisDir, product, "backup", addr)
+}
+
 func LoadTopom(client Client, product string, must bool) (*Topom, error) {
 	b, err := client.Read(LockPath(product), must)
 	if err != nil || b == nil {
@@ -109,6 +113,10 @@ func (s *Store) DashboardProductPath(addr string) string {
 
 func (s *Store) ProxyProductPath(addr string) string {
 	return ProxyProductPath(s.product, addr)
+}
+
+func (s *Store) BackupProductPath(addr string) string {
+	return BackupProductPath(s.product, addr)
 }
 
 func (s *Store) GroupDir() string {
@@ -285,6 +293,18 @@ func (s *Store) LoadDashboardProduct(addr string, must bool) (*ClusterConfig, er
 
 func (s *Store) LoadProxyProduct(addr string, must bool) (*ClusterConfig, error) {
 	b, err := s.client.Read(s.ProxyProductPath(addr), must)
+	if err != nil || b == nil {
+		return nil, err
+	}
+	p := &ClusterConfig{}
+	if err := jsonDecode(p, b); err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+func (s *Store) LoadBackupProduct(addr string, must bool) (*ClusterConfig, error) {
+	b, err := s.client.Read(s.BackupProductPath(addr), must)
 	if err != nil || b == nil {
 		return nil, err
 	}

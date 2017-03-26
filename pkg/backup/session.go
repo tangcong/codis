@@ -5,14 +5,10 @@ package backup
 
 import (
 	"encoding/json"
-	"io"
 	"net"
 	"sync"
 	"time"
 
-	"fmt"
-	"github.com/CodisLabs/codis/pkg/utils"
-	"github.com/CodisLabs/codis/pkg/utils/errors"
 	"github.com/CodisLabs/codis/pkg/utils/log"
 	"github.com/CodisLabs/codis/pkg/utils/sync2/atomic2"
 	"github.com/golang/protobuf/proto"
@@ -35,7 +31,6 @@ type Session struct {
 	broken atomic2.Bool
 	config *Config
 
-	mwriter    map[string]io.WriteCloser
 	authorized bool
 }
 
@@ -66,7 +61,6 @@ func NewSession(sock net.Conn, config *Config) *Session {
 		Conn: c, config: config,
 		CreateUnix: time.Now().Unix(),
 	}
-	s.mwriter = make(map[string]io.WriteCloser)
 	log.Infof("session [%p] create: %s", s, s)
 	return s
 }
@@ -94,10 +88,6 @@ func (s *Session) CloseWithError(err error) error {
 	return s.Conn.Close()
 }
 
-var (
-	ErrTooManySessions = errors.New("too many sessions")
-)
-
 func (s *Session) Start() {
 	s.start.Do(func() {
 
@@ -119,30 +109,15 @@ func (s *Session) loopReader() (err error) {
 			incrOpWriteFail(1)
 			return err
 		}
-		writer, ok := s.mwriter[*r.ProductName]
-		if !ok {
-			ok, err = utils.IsDirExist(s.config.DataDir)
-			if err != nil {
-				log.Panicf("backup check dir exist failed:%s", err)
-			} else if !ok {
-				err = utils.MkDir(s.config.DataDir)
-				if err != nil {
-					log.Panicf("backup mk dir failed:%s", err)
-				}
-			}
-			file := s.config.DataDir + "/" + *r.ProductName
-			if writer, err = log.NewRollingFile(file, log.HourlyRolling); err != nil {
-				log.Panicf("backup open roll file failed:%s", file)
-			} else {
-				s.mwriter[*r.ProductName] = writer
-			}
-		}
 		index := int(r.GetUsedIndex())
 		cmds := int(r.GetCmds())
-		fmt.Fprintf(writer, "%d\t%d\n", time.Now().Unix(), r.GetCmds())
-		fmt.Fprintf(writer, "%s\n", r.MultiCmd[:index])
+		err = AppendBuf(r.MultiCmd[:index])
+		if err != nil {
+			incrOpWriteFail(int64(cmds))
+		} else {
+			incrOpWriteSucc(int64(cmds))
+		}
 		s.handleResponse(r)
-		incrOpWriteSucc(int64(cmds))
 	}
 	return nil
 }

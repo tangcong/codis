@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"github.com/CodisLabs/codis/pkg/backup"
+	"github.com/CodisLabs/codis/pkg/models"
 	"github.com/CodisLabs/codis/pkg/utils"
 	"github.com/CodisLabs/codis/pkg/utils/log"
 	"github.com/docopt/docopt-go"
@@ -74,6 +75,54 @@ Options:
 	}
 	config.BackupAddr = localIp + ":" + strconv.Itoa(config.BackupPort)
 	config.AdminAddr = localIp + ":" + strconv.Itoa(config.AdminPort)
+
+	var coordinator struct {
+		name string
+		addr string
+	}
+
+	switch {
+
+	case d["--zookeeper"] != nil:
+		coordinator.name = "zookeeper"
+		coordinator.addr = utils.ArgumentMust(d, "--zookeeper")
+
+	case d["--etcd"] != nil:
+		coordinator.name = "etcd"
+		coordinator.addr = utils.ArgumentMust(d, "--etcd")
+
+	case d["--filesystem"] != nil:
+		coordinator.name = "filesystem"
+		coordinator.addr = utils.ArgumentMust(d, "--filesystem")
+
+	case d["--db"] != nil:
+		coordinator.name = "db"
+		coordinator.addr = utils.ArgumentMust(d, "--db")
+	}
+	if coordinator.name != "" {
+		log.Warnf("option --%s = %s", coordinator.name, coordinator.addr)
+	}
+
+	log.Warnf("name is %s,addr is %s\n", coordinator.name, coordinator.addr)
+
+	if config.ProductFrom == "coordinator" {
+
+		client, err := models.NewClient(coordinator.name, coordinator.addr, time.Minute)
+		if err != nil {
+			log.PanicErrorf(err, "create '%s' client to '%s' failed", coordinator.name, coordinator.addr)
+		}
+		defer client.Close()
+		store := models.NewStore(client, "__config__")
+		cluster, err := store.LoadBackupProduct(config.BackupAddr, true)
+		if err != nil {
+			log.PanicErrorf(err, "load proxy product failed")
+		}
+		config.ProductName = cluster.ProductName
+		log.Warnf("product name is %s\n", config.ProductName)
+
+	}
+
+	go backup.AsyncFlushFile(config)
 
 	s, err := backup.New(config)
 	if err != nil {

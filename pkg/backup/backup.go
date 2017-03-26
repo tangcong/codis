@@ -4,6 +4,7 @@
 package backup
 
 import (
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -35,6 +36,7 @@ type Backup struct {
 
 	lbackup net.Listener
 	ladmin  net.Listener
+	writer  io.Writer
 }
 
 var ErrClosedBackup = errors.New("use of closed backup")
@@ -61,7 +63,6 @@ func New(config *Config) (*Backup, error) {
 		s.model.Sys = strings.TrimSpace(string(b))
 	}
 	s.model.Hostname = utils.Hostname
-
 	if err := s.setup(config); err != nil {
 		s.Close()
 		return nil, err

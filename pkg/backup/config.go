@@ -38,6 +38,10 @@ admin_port = 11081
 # Set data file dir 
 data_dir = "/data/redis"
 
+product_name = ""
+
+product_from = "coordinator"
+
 # Set max number of alive sessions.
 backup_max_clients = 1000
 
@@ -74,6 +78,8 @@ session_keepalive_period = "75s"
 # Set session to be sensitive to failures. Default is false, instead of closing socket, proxy will send an error response to client.
 session_break_on_failure = false
 
+backup_bufsize = 8024000
+
 `
 
 type Config struct {
@@ -84,6 +90,8 @@ type Config struct {
 	HostBackup string `toml:"-" json:"-"`
 
 	BindItf               string         `toml:"bind_itf" json:"bind_itf"`
+	ProductName           string         `toml:"product_name" json:"product_name"`
+	ProductFrom           string         `toml:"product_from" json:"product_from"`
 	BackupPort            int            `toml:"backup_port" json:"backup_port"`
 	AdminPort             int            `toml:"admin_port" json:"admin_port"`
 	DataDir               string         `toml:"data_dir" json:"data_dir"`
@@ -109,6 +117,7 @@ type Config struct {
 	SessionMaxPipeline     int               `toml:"session_max_pipeline" json:"session_max_pipeline"`
 	SessionKeepAlivePeriod timesize.Duration `toml:"session_keepalive_period" json:"session_keepalive_period"`
 	SessionBreakOnFailure  bool              `toml:"session_break_on_failure" json:"session_break_on_failure"`
+	BackupBufsize          int               `toml:"backup_bufsize" json:"backup_bufsize"`
 }
 
 func NewDefaultConfig() *Config {
