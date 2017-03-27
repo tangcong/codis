@@ -109,9 +109,8 @@ func (s *Session) loopReader() (err error) {
 			incrOpWriteFail(1)
 			return err
 		}
-		index := int(r.GetUsedIndex())
 		cmds := int(r.GetCmds())
-		err = AppendBuf(r.MultiCmd[:index])
+		err = AppendBuf(r.MultiCmd)
 		if err != nil {
 			incrOpWriteFail(int64(cmds))
 		} else {

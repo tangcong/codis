@@ -49,15 +49,14 @@ type Proxy struct {
 	lproxy net.Listener
 	ladmin net.Listener
 
-	cmds           chan *Request
-	rsps           chan int32
-	req            *backup.WriteRequest
-	encoder        *backup.FlushEncoder
-	conn           *backup.Conn
-	cmdBufsize     int
-	curCmdNum      *int32
-	curUsedIndex   *int32
-	requestEncoder *redisapi.Encoder
+	cmds          chan *Request
+	rsps          chan int32
+	backupReq     *backup.WriteRequest
+	backupEncoder *backup.FlushEncoder
+	redisEncoder  *redisapi.Encoder
+	conn          *backup.Conn
+	cmdBufsize    int
+	curCmdNum     *int32
 
 	ha struct {
 		monitor *redis.Sentinel
@@ -98,13 +97,12 @@ func New(config *Config) (*Proxy, error) {
 	s.model.Hostname = utils.Hostname
 	s.cmds = make(chan *Request, s.config.WriteReqBufsize)
 	s.rsps = make(chan int32, s.config.WriteReqBufsize)
-	s.req = &backup.WriteRequest{ProductName: &s.config.ProductName}
+	s.backupReq = &backup.WriteRequest{ProductName: &s.config.ProductName}
 	s.cmdBufsize = s.config.BackupMaxReq * s.config.RedisBufsize.AsInt()
-	s.encoder = nil
+	s.backupEncoder = nil
 	s.conn = nil
 	s.curCmdNum = proto.Int32(0)
-	s.curUsedIndex = proto.Int32(0)
-	s.requestEncoder = redisapi.NewEncoderSize(s, s.cmdBufsize)
+	s.redisEncoder = redisapi.NewEncoderSize(s, s.cmdBufsize)
 
 	if err := s.setup(config); err != nil {
 		s.Close()
@@ -687,7 +685,7 @@ func (s *Proxy) backupLoopWriter() {
 		defer s.Close()
 		select {
 		case <-tick:
-			err := s.requestEncoder.Flush()
+			err := s.redisEncoder.Flush()
 			if err != nil {
 				log.Warnf("send cmd failed,may lost messages!")
 			}
@@ -703,9 +701,7 @@ func (s *Proxy) backupLoopWriter() {
 }
 
 func (s *Proxy) Write(buf []byte) (int, error) {
-	*s.curUsedIndex = int32(len(buf))
-	s.req.UsedIndex = s.curUsedIndex
-	s.req.MultiCmd = buf
+	s.backupReq.MultiCmd = buf
 	err := s.sendCmds()
 	if err == nil {
 		return len(buf), nil
@@ -715,25 +711,24 @@ func (s *Proxy) Write(buf []byte) (int, error) {
 }
 
 func (s *Proxy) pushCmd(cmd *Request) error {
-	cmds := int(s.req.GetCmds())
+	cmds := int(s.backupReq.GetCmds())
 	if cmds >= s.config.BackupMaxReq {
 		incrOpWriteFail(1)
 		return ErrCmdBlock
 	}
-	s.requestEncoder.EncodeMultiBulk(cmd.Multi, false)
+	s.redisEncoder.EncodeMultiBulk(cmd.Multi, false)
 	cmds++
 	*s.curCmdNum = int32(cmds)
-	s.req.Cmds = s.curCmdNum
+	s.backupReq.Cmds = s.curCmdNum
 	if cmds >= s.config.BackupMaxReq {
-		s.requestEncoder.Flush()
+		s.redisEncoder.Flush()
 	}
 	return nil
 }
 
 func (s *Proxy) sendCmds() error {
-	index := s.req.GetUsedIndex()
-	cmds := s.req.GetCmds()
-	if cmds == 0 || index == 0 {
+	cmds := s.backupReq.GetCmds()
+	if cmds == 0 {
 		return nil
 	}
 	err := ErrSendCmdFail
@@ -747,21 +742,21 @@ func (s *Proxy) sendCmds() error {
 				go s.backupLoopReader(s.conn)
 			}
 		}
-		if s.encoder == nil {
-			s.encoder = s.conn.FlushEncoder()
-			s.encoder.MaxInterval = time.Millisecond
-			s.encoder.MaxBuffered = math2.MinInt(s.config.BackupMaxReq, cap(s.cmds))
+		if s.backupEncoder == nil {
+			s.backupEncoder = s.conn.FlushEncoder()
+			s.backupEncoder.MaxInterval = time.Millisecond
+			s.backupEncoder.MaxBuffered = math2.MinInt(s.config.BackupMaxReq, cap(s.cmds))
 		}
-		if err := s.encoder.EncodeReq(s.req); err != nil {
+		if err := s.backupEncoder.EncodeReq(s.backupReq); err != nil {
 			log.WarnErrorf(err, "backup conn failure, %p", s)
 			s.conn.Close()
-			s.conn, s.encoder = nil, nil
+			s.conn, s.backupEncoder = nil, nil
 			continue
 		}
-		if err := s.encoder.Flush(len(s.cmds) == 0); err != nil {
+		if err := s.backupEncoder.Flush(len(s.cmds) == 0); err != nil {
 			log.WarnErrorf(err, "backup conn failure, %p", s)
 			s.conn.Close()
-			s.conn, s.encoder = nil, nil
+			s.conn, s.backupEncoder = nil, nil
 			continue
 		}
 		err = nil
@@ -769,8 +764,7 @@ func (s *Proxy) sendCmds() error {
 	}
 	if err == nil && len(s.rsps) < s.config.WriteReqBufsize {
 		s.rsps <- cmds
-		s.req.UsedIndex = proto.Int32(0)
-		s.req.Cmds = proto.Int32(0)
+		s.backupReq.Cmds = proto.Int32(0)
 	} else {
 		incrOpWriteFail(int64(cmds))
 	}
