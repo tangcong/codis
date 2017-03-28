@@ -132,6 +132,16 @@ redis_bufsize = 8192
 metrics_report_statsd_server = ""
 metrics_report_statsd_period = "1s"
 metrics_report_statsd_prefix = ""
+
+
+# Set backup recv buffer size & timeout.
+backup_recv_bufsize = "32kb"
+backup_recv_timeout = "30m"
+
+# Set backup send buffer & timeout.
+backup_send_bufsize = "512kb"
+backup_send_timeout = "30s"
+
 `
 
 type Config struct {
@@ -196,6 +206,11 @@ type Config struct {
 	MetricsReportStatsdServer string            `toml:"metrics_report_statsd_server" json:"metrics_report_statsd_server"`
 	MetricsReportStatsdPeriod timesize.Duration `toml:"metrics_report_statsd_period" json:"metrics_report_statsd_period"`
 	MetricsReportStatsdPrefix string            `toml:"metrics_report_statsd_prefix" json:"metrics_report_statsd_prefix"`
+
+	BackupRecvBufsize bytesize.Int64    `toml:"backup_recv_bufsize" json:"backup_recv_bufsize"`
+	BackupRecvTimeout timesize.Duration `toml:"backup_recv_timeout" json:"backup_recv_timeout"`
+	BackupSendBufsize bytesize.Int64    `toml:"backup_send_bufsize" json:"backup_send_bufsize"`
+	BackupSendTimeout timesize.Duration `toml:"backup_send_timeout" json:"backup_send_timeout"`
 }
 
 func NewDefaultConfig() *Config {

@@ -117,3 +117,13 @@ metrics_report_statsd_server = ""
 metrics_report_statsd_period = "1s"
 metrics_report_statsd_prefix = ""
 
+
+# Set backup recv buffer size & timeout.
+backup_recv_bufsize = "32kb"
+backup_recv_timeout = "30m"
+
+# Set backup send buffer & timeout.
+backup_send_bufsize = "512kb"
+backup_send_timeout = "30s"
+
+

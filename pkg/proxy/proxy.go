@@ -25,6 +25,7 @@ import (
 	"github.com/CodisLabs/codis/pkg/utils/math2"
 	"github.com/CodisLabs/codis/pkg/utils/redis"
 	"github.com/CodisLabs/codis/pkg/utils/rpc"
+	"github.com/CodisLabs/codis/pkg/utils/sync2/atomic2"
 	"github.com/CodisLabs/codis/pkg/utils/unsafe2"
 	"github.com/golang/protobuf/proto"
 )
@@ -57,6 +58,7 @@ type Proxy struct {
 	conn          *backup.Conn
 	cmdBufsize    int
 	curCmdNum     *int32
+	broken        atomic2.Bool
 
 	ha struct {
 		monitor *redis.Sentinel
@@ -103,6 +105,7 @@ func New(config *Config) (*Proxy, error) {
 	s.conn = nil
 	s.curCmdNum = proto.Int32(0)
 	s.redisEncoder = redisapi.NewEncoderSize(s, s.cmdBufsize)
+	s.broken.Set(true)
 
 	if err := s.setup(config); err != nil {
 		s.Close()
@@ -117,6 +120,7 @@ func New(config *Config) (*Proxy, error) {
 	go s.serveProxy()
 	if !s.config.CloseBackup {
 		go s.backupLoopWriter()
+		go s.backupLoopReader()
 	}
 
 	s.startMetricsJson()
@@ -661,15 +665,15 @@ func (s *Proxy) Stats(flags StatsFlags) *Stats {
 
 func (s *Proxy) makeBackupConn() (*backup.Conn, error) {
 	c, err := backup.DialTimeout(s.config.BackupAddr, time.Second*5,
-		s.config.BackendRecvBufsize.AsInt(),
-		s.config.BackendSendBufsize.AsInt())
+		s.config.BackupRecvBufsize.AsInt(),
+		s.config.BackupSendBufsize.AsInt())
 	if err != nil {
 		log.Warnf("proxy connect backup(%s) failed:%s\n", s.config.BackupAddr, err)
 		return nil, err
 	}
-	c.ReaderTimeout = s.config.BackendRecvTimeout.Duration()
-	c.WriterTimeout = s.config.BackendSendTimeout.Duration()
-	c.SetKeepAlivePeriod(s.config.BackendKeepAlivePeriod.Duration())
+	log.Infof("proxy(%s) connected backup(%s)\n", c.LocalAddr(), s.config.BackupAddr)
+	c.ReaderTimeout = s.config.BackupRecvTimeout.Duration()
+	c.WriterTimeout = s.config.BackupSendTimeout.Duration()
 	return c, nil
 }
 
@@ -733,30 +737,32 @@ func (s *Proxy) sendCmds() error {
 	}
 	err := ErrSendCmdFail
 	for i := 0; i < 3; i++ {
-		if s.conn == nil {
+		if s.broken.IsFalse() && s.conn.WriterTimeout < time.Since(s.conn.LastWrite) {
+			s.conn.Close()
+			s.broken.Set(true)
+		}
+		if s.broken.IsTrue() {
 			s.conn, err = s.makeBackupConn()
 			if err != nil {
 				time.Sleep(time.Second)
 				continue
 			} else {
-				go s.backupLoopReader(s.conn)
+				s.backupEncoder = s.conn.FlushEncoder()
+				s.backupEncoder.MaxInterval = time.Millisecond
+				s.backupEncoder.MaxBuffered = math2.MinInt(s.config.BackupMaxReq, cap(s.cmds))
+				s.broken.Set(false)
 			}
 		}
-		if s.backupEncoder == nil {
-			s.backupEncoder = s.conn.FlushEncoder()
-			s.backupEncoder.MaxInterval = time.Millisecond
-			s.backupEncoder.MaxBuffered = math2.MinInt(s.config.BackupMaxReq, cap(s.cmds))
-		}
 		if err := s.backupEncoder.EncodeReq(s.backupReq); err != nil {
-			log.WarnErrorf(err, "backup conn failure, %p", s)
+			log.Warnf("backup conn encode failure(%p),err is %s\n", s, err)
 			s.conn.Close()
-			s.conn, s.backupEncoder = nil, nil
+			s.broken.Set(true)
 			continue
 		}
 		if err := s.backupEncoder.Flush(len(s.cmds) == 0); err != nil {
-			log.WarnErrorf(err, "backup conn failure, %p", s)
+			log.Warnf("backup conn flush failure(%p),err is %s\n", s, err)
 			s.conn.Close()
-			s.conn, s.backupEncoder = nil, nil
+			s.broken.Set(true)
 			continue
 		}
 		err = nil
@@ -771,16 +777,16 @@ func (s *Proxy) sendCmds() error {
 	return err
 }
 
-func (s *Proxy) backupLoopReader(c *backup.Conn) {
-
+func (s *Proxy) backupLoopReader() {
+	log.Infof("create backup loop reader goroutine(%p)!\n", s)
 	for cmds := range s.rsps {
-		if c != nil {
-			if resp, err := c.DecodeRes(); err != nil {
+		if !s.broken.IsTrue() {
+			if resp, err := s.conn.DecodeRes(); err != nil {
 				incrOpWriteFail(int64(cmds))
-				log.WarnErrorf(err, "commands = %d,status = %d,decode failure, %s\n", cmds, err)
-				return
+				s.conn.Close()
+				s.broken.Set(true)
+				log.Warnf("command num = %d,decode failure %s!\n", cmds, err)
 			} else {
-				//log.Warnf("product = %s, command num = %d,status = %d\n", r.Req.GetProductName(), resp.Res.GetCmds(), resp.Res.GetStatus())
 				incrOpWriteSucc(int64(resp.GetCmds()))
 			}
 		}

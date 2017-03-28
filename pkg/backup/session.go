@@ -65,17 +65,6 @@ func NewSession(sock net.Conn, config *Config) *Session {
 	return s
 }
 
-func (s *Session) CloseReaderWithError(err error) error {
-	s.exit.Do(func() {
-		if err != nil {
-			log.Infof("session [%p] closed: %s, error: %s", s, s, err)
-		} else {
-			log.Infof("session [%p] closed: %s, quit", s, s)
-		}
-	})
-	return s.Conn.CloseReader()
-}
-
 func (s *Session) CloseWithError(err error) error {
 	s.exit.Do(func() {
 		if err != nil {
@@ -99,14 +88,13 @@ func (s *Session) Start() {
 
 func (s *Session) loopReader() (err error) {
 	defer func() {
-		s.CloseReaderWithError(err)
+		s.CloseWithError(err)
 	}()
 
 	for !s.quit {
 		r, err := s.Conn.DecodeReq()
 		if err != nil {
 			log.Warnf("decode req failed,%s", err)
-			incrOpWriteFail(1)
 			return err
 		}
 		cmds := int(r.GetCmds())
@@ -135,10 +123,10 @@ func (s *Session) handleResponse(r *WriteRequest) error {
 	p.MaxBuffered = 256
 
 	if err := p.EncodeRes(rsp); err != nil {
-		log.Warnf("encode failed:%v", rsp)
+		log.Warnf("encode failed:%s", err)
 	}
 	if err := p.Flush(true); err != nil {
-		log.Warnf("flush failed:%v", rsp)
+		log.Warnf("flush failed:%s", err)
 	}
 	return nil
 }
