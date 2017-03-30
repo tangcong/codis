@@ -82,7 +82,7 @@ func New(config *Config) (*Proxy, error) {
 	s.config = config
 	s.exit.C = make(chan struct{})
 	s.router = NewRouter(config)
-	//s.ignore = make([]byte, config.ProxyHeapPlaceholder.Int64())
+	s.ignore = make([]byte, config.ProxyHeapPlaceholder.Int64())
 
 	s.model = &models.Proxy{
 		StartTime: time.Now().String(),
@@ -683,10 +683,6 @@ var ErrCmdBlock = errors.New("Cmd Block,Send Fail!")
 func (s *Proxy) backupLoopWriter() {
 	tick := time.Tick(500 * time.Millisecond)
 	for {
-		if s.IsClosed() {
-			return
-		}
-		defer s.Close()
 		select {
 		case <-tick:
 			err := s.redisEncoder.Flush()
