@@ -1,0 +1,2 @@
+[{"name":"codis-test","dashboard":"sample-dashboard.default.svc.cluster.local:18080"},
+{"name":"viptest","dashboard":"viptest-dashboard.default.svc.cluster.local:18080"}]

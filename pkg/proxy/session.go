@@ -637,6 +637,10 @@ func (s *Session) incrOpTotal() {
 	s.stats.total.Incr()
 }
 
+func (s *Session) incrFails() {
+	s.stats.fails.Incr()
+}
+
 func (s *Session) getOpStats(opstr string) *opStats {
 	e := s.stats.opmap[opstr]
 	if e == nil {
